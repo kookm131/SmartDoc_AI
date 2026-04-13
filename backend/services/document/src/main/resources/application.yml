@@ -1,0 +1,19 @@
+server:
+  port: ${SERVER_PORT:8081}
+
+spring:
+  application:
+    name: smartdoc-document
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+
+logging:
+  level:
+    root: INFO
+    com.smartdoc.document: DEBUG
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

@@ -1,0 +1,52 @@
+version: "3.9"
+
+services:
+  mssql:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    container_name: smartdoc-mssql
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: "YourStrong!Passw0rd"
+    ports:
+      - "1433:1433"
+    healthcheck:
+      test: ["CMD", "bash", "-c", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P YourStrong!Passw0rd -Q 'SELECT 1' -C"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  gateway:
+    image: eclipse-temurin:17-jre
+    container_name: smartdoc-gateway
+    command: ["bash", "-lc", "echo 'gateway 플레이스홀더'; sleep infinity"]
+    ports:
+      - "8080:8080"
+    depends_on:
+      - mssql
+
+  document:
+    image: eclipse-temurin:17-jre
+    container_name: smartdoc-document
+    command: ["bash", "-lc", "echo 'document 플레이스홀더'; sleep infinity"]
+    ports:
+      - "8081:8081"
+    depends_on:
+      - mssql
+
+  analysis:
+    image: eclipse-temurin:17-jre
+    container_name: smartdoc-analysis
+    command: ["bash", "-lc", "echo 'analysis 플레이스홀더'; sleep infinity"]
+    ports:
+      - "8082:8082"
+    depends_on:
+      - mssql
+
+  notification:
+    image: eclipse-temurin:17-jre
+    container_name: smartdoc-notification
+    command: ["bash", "-lc", "echo 'notification 플레이스홀더'; sleep infinity"]
+    ports:
+      - "8083:8083"
+    depends_on:
+      - mssql

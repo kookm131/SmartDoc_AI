@@ -1,0 +1,19 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  application:
+    name: smartdoc-gateway
+  profiles:
+    active: ${SPRING_PROFILES_ACTIVE:local}
+
+logging:
+  level:
+    root: INFO
+    com.smartdoc.gateway: DEBUG
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info

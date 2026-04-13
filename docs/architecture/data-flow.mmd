@@ -1,0 +1,12 @@
+flowchart LR
+  user[사용자] --> web[React 프론트엔드]
+  web --> alb[ALB]
+  alb --> gw[Gateway 서비스]
+  gw --> doc[Document 서비스]
+  doc --> s3[(Amazon S3)]
+  doc --> ana[Analysis 서비스]
+  ana --> tex[AWS Textract]
+  ana --> comp[Amazon Comprehend]
+  ana --> db[(RDBMS)]
+  ana --> noti[Notification 서비스]
+  noti --> slack[Slack]
