@@ -10,6 +10,7 @@
 ## 현재 상태
 ### 구현됨
 - 하위 도메인별 템플릿 파일 생성
+- 백엔드 서비스 `./gradlew` 실행 기반(Wrapper) 반영
 
 ### 미구현
 - 실제 구현 결과 반영
@@ -35,3 +36,7 @@
 - PRD 항목과 산출물 매핑표 추가
 - 변경 이력(changelog) 섹션 도입
 - 완료 기준(DoD) 충족 여부 주기적 점검
+
+## 실행 메모
+- 환경 제약이 있는 경우(권한/캐시 경로), 백엔드 실행 시 다음 형태를 사용합니다.
+  - `GRADLE_USER_HOME=/tmp/.gradle ./gradlew --no-daemon --project-cache-dir /tmp/<service>-projcache <task>`

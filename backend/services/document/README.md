@@ -22,7 +22,7 @@
 
 ## 실행/검증 순서
 1. 실행
-   - `gradle bootRun` (또는 `./gradlew bootRun`)
+   - `./gradlew bootRun`
 2. 기본 엔드포인트 확인
    - `POST /api/v1/documents`
 

@@ -45,7 +45,7 @@ SmartDoc AI는 비정형 문서를 AI로 분석하고 후속 업무를 자동화
 2. 환경 변수 템플릿 복사
    - `cp .env.example .env`
 3. 애플리케이션 실행
-   - `gradle bootRun` (또는 `./gradlew bootRun`)
+   - `./gradlew bootRun`
 
 기본 포트:
 - gateway `8080`

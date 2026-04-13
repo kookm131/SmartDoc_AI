@@ -24,8 +24,7 @@ SmartDoc AI 백엔드는 Spring Boot 기반 4개 마이크로서비스 템플릿
 
 ## 선행 조건
 1. Java 17
-2. Gradle 실행 환경
-3. 서비스별 `.env` 설정
+2. 서비스별 `.env` 설정 (`.env.example` 복사)
 
 ## 실행/검증 순서
 1. 공통 규칙 확인
@@ -36,7 +35,11 @@ SmartDoc AI 백엔드는 Spring Boot 기반 4개 마이크로서비스 템플릿
    - [`backend/services/analysis/README.md`](./services/analysis/README.md)
    - [`backend/services/notification/README.md`](./services/notification/README.md)
 
+## Troubleshooting
+- `./gradlew` 실행 시 사용자 홈(`~/.gradle`) 권한 오류가 나면 임시 경로를 지정해 실행합니다.
+  - `GRADLE_USER_HOME=/tmp/.gradle ./gradlew --version`
+  - `GRADLE_USER_HOME=/tmp/.gradle ./gradlew bootRun`
+
 ## 다음 단계
-- Gradle Wrapper 통일(`./gradlew`)
 - 공통 라이브러리/에러 모델 표준화
 - 헬스체크 외 readiness/liveness 엔드포인트 보강

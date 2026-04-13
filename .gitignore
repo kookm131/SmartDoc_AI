@@ -1,0 +1,14 @@
+node_modules/
+build/
+dist/
+coverage/
+.venv/
+.DS_Store
+*.log
+.env*
+!.env.example
+.codex
+
+# Local binaries and tooling caches
+smartdoc-ai/minikube-linux-amd64
+backend/services/*/.gradle/
