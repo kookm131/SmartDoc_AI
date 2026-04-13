@@ -1,20 +1,37 @@
 # SmartDoc Document 서비스
 
-## 역할
-문서 업로드 및 메타데이터 수명주기 서비스
+## 목적
+- 문서 업로드 및 메타데이터 수명주기 관리
+- 분석 파이프라인 진입 전 원본/상태 정보 관리
 
-## 로컬 실행
-1. `.env.example`을 `.env`로 복사하고 필요 값을 수정합니다.
-2. 애플리케이션을 실행합니다.
-   - `gradle bootRun` (래퍼 추가 시 `./gradlew bootRun`)
-3. 헬스/기본 엔드포인트를 확인합니다.
+## 현재 상태
+### 구현됨
+- Spring Boot 템플릿 앱
+- 기본 문서 등록 엔드포인트 골격
+
+### 미구현
+- S3 업로드 실연동
+- DB 스키마/트랜잭션 정책 확정
+
+## 선행 조건
+1. Java 17
+2. `.env.example` 복사
+   - `cp .env.example .env`
+3. 공통 규칙 확인
+   - [`backend/CONVENTIONS.md`](../../CONVENTIONS.md)
+
+## 실행/검증 순서
+1. 실행
+   - `gradle bootRun` (또는 `./gradlew bootRun`)
+2. 기본 엔드포인트 확인
    - `POST /api/v1/documents`
 
-## 기본 설정
+## 표준 설정
 - 포트: `8081`
 - 프로필: `local`
-- 베이스 패키지: `com.smartdoc.document`
+- 패키지: `com.smartdoc.document`
+- 환경변수 접두사: `SMARTDOC_DOCUMENT_*`
 
-## 참고
-- 본 서비스는 MSA 초기 스캐폴딩 템플릿입니다.
-- DB/AWS/인증/메시징 연동은 단계적으로 구현해야 합니다.
+## 다음 단계
+- 파일 업로드/메타데이터 저장 트랜잭션 연결
+- 분석 서비스 연계 이벤트 발행 구조 추가

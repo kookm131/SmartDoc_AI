@@ -1,20 +1,37 @@
 # SmartDoc Analysis 서비스
 
-## 역할
-AI 분석 오케스트레이션 서비스
+## 목적
+- 문서 분석 오케스트레이션 수행
+- Textract/Comprehend 결과를 도메인 데이터로 변환
 
-## 로컬 실행
-1. `.env.example`을 `.env`로 복사하고 필요 값을 수정합니다.
-2. 애플리케이션을 실행합니다.
-   - `gradle bootRun` (래퍼 추가 시 `./gradlew bootRun`)
-3. 헬스/기본 엔드포인트를 확인합니다.
+## 현재 상태
+### 구현됨
+- Spring Boot 템플릿 앱
+- 분석 작업 요청 엔드포인트 골격
+
+### 미구현
+- AWS Textract/Comprehend API 실연동
+- 분석 실패 재시도/보상 처리
+
+## 선행 조건
+1. Java 17
+2. `.env.example` 복사
+   - `cp .env.example .env`
+3. 공통 규칙 확인
+   - [`backend/CONVENTIONS.md`](../../CONVENTIONS.md)
+
+## 실행/검증 순서
+1. 실행
+   - `gradle bootRun` (또는 `./gradlew bootRun`)
+2. 기본 엔드포인트 확인
    - `POST /api/v1/analysis/jobs`
 
-## 기본 설정
+## 표준 설정
 - 포트: `8082`
 - 프로필: `local`
-- 베이스 패키지: `com.smartdoc.analysis`
+- 패키지: `com.smartdoc.analysis`
+- 환경변수 접두사: `SMARTDOC_ANALYSIS_*`
 
-## 참고
-- 본 서비스는 MSA 초기 스캐폴딩 템플릿입니다.
-- DB/AWS/인증/메시징 연동은 단계적으로 구현해야 합니다.
+## 다음 단계
+- 비동기 작업 큐/상태 관리 도입
+- 분석 결과 정규화 및 저장 전략 확정
