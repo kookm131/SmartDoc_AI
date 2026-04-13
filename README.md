@@ -1,51 +1,26 @@
 # SmartDoc AI
 
 SmartDoc AI는 비정형 문서를 AI로 분석하고 후속 업무를 자동화하는 MSA 기반 플랫폼입니다.
-이 저장소는 프론트엔드(기존) + 백엔드/인프라/문서(스캐폴딩)를 함께 관리합니다.
 
-## 가장 먼저 할 일: 프로젝트 기준선 고정
-로컬 K8s 기준으로 아래 항목을 먼저 준비하세요.
+## 가장 먼저 할 일
+로컬 기준선부터 맞춥니다.
 
-1. Docker 실행 가능 여부 확인
-   - `docker --version`
-2. Kubernetes CLI 확인
-   - `kubectl version --client`
-3. 로컬 클러스터 도구 확인(kind 또는 minikube)
-   - `kind version` 또는 `minikube version`
-4. 백엔드 런타임 확인
-   - `java -version` (Java 17)
-5. 프론트엔드 런타임 확인
-   - `node -v` (Node 20+)
+1. `docker --version`
+2. `kubectl version --client`
+3. `kind version` 또는 `minikube version`
+4. `java -version` (Java 17)
+5. `node -v` (Node 20+)
 
-## 온보딩 순서 (배포 준비 우선)
-1. 인프라 준비
-   - [`infra/README.md`](./infra/README.md)
-2. 백엔드 서비스 점검
-   - [`backend/README.md`](./backend/README.md)
-3. 산출물 문서 정리
-   - [`docs/docs.md`](./docs/docs.md)
-4. 제품/PRD 문맥 확인
-   - [`docs/product-context.md`](./docs/product-context.md)
-   - [`docs/prd.md`](./docs/prd.md)
+## 빠른 실행
+### 프론트엔드
+1. `npm install`
+2. `.env.example` 참고 후 `.env.local` 작성
+3. `npm run dev`
 
-## 실행 방법 (Quick Start)
-### 1) 프론트엔드 실행
-1. 디렉토리 이동
-   - `cd smartdoc-ai`
-2. 의존성 설치
-   - `npm install`
-3. 환경 변수 설정
-   - `.env.example` 참고 후 `.env.local` 작성
-4. 개발 서버 실행
-   - `npm run dev`
-
-### 2) 백엔드 실행 (서비스별)
-1. 서비스 디렉토리 이동
-   - `cd backend/services/gateway` (또는 `document`, `analysis`, `notification`)
-2. 환경 변수 템플릿 복사
-   - `cp .env.example .env`
-3. 애플리케이션 실행
-   - `./gradlew bootRun`
+### 백엔드 (서비스별)
+1. `cd backend/services/gateway` (또는 `document`, `analysis`, `notification`)
+2. `cp .env.example .env`
+3. `./gradlew bootRun`
 
 기본 포트:
 - gateway `8080`
@@ -53,39 +28,65 @@ SmartDoc AI는 비정형 문서를 AI로 분석하고 후속 업무를 자동화
 - analysis `8082`
 - notification `8083`
 
-### 3) 인프라 템플릿 실행 (선택)
-1. 디렉토리 이동
-   - `cd infra/docker`
-2. Compose 설정 확인
-   - `docker compose -f docker-compose.yml config`
-3. 컨테이너 기동
-   - `docker compose -f docker-compose.yml up -d`
-4. 상태 확인
-   - `docker compose -f docker-compose.yml ps`
+### 인프라 템플릿
+1. `cd infra/docker`
+2. `docker compose -f docker-compose.yml config`
+3. `docker compose -f docker-compose.yml up -d`
+4. `docker compose -f docker-compose.yml ps`
 
-## 현재 상태
-### 구현됨
-- 프론트엔드 프로젝트 기본 구조 유지
-- 백엔드 4개 서비스 템플릿 생성
-- Docker Compose/Kubernetes base 매니페스트 골격 생성
-- 아키텍처/ERD/API/UI 문서 템플릿 생성
+## 백엔드 요약
+- 공통 패턴: Spring Boot + Kotlin + Java 17
+- 서비스 책임:
+  - gateway: API 진입점/라우팅
+  - document: 문서 업로드/메타데이터
+  - analysis: Textract/Comprehend 오케스트레이션
+  - notification: 규칙 기반 알림 디스패치
+- 환경변수 접두사:
+  - `SMARTDOC_GATEWAY_*`
+  - `SMARTDOC_DOCUMENT_*`
+  - `SMARTDOC_ANALYSIS_*`
+  - `SMARTDOC_NOTIFICATION_*`
 
-### 미구현 (다음 단계)
-- AWS 실연동(Textract/Comprehend/S3/IAM)
-- 인증/인가, 시크릿 관리, 운영 수준 관측성
-- 서비스 간 메시징/재시도/장애 복구 전략
+### 백엔드 Troubleshooting
+- `fileHashes.lock (Permission denied)`:
+  - `sudo chown -R $USER:$USER backend/services/<service>`
+  - `rm -rf backend/services/<service>/.gradle`
+  - `cd backend/services/<service> && ./gradlew bootRun`
+- 환경 제약 우회 실행:
+  - `GRADLE_USER_HOME=/tmp/.gradle ./gradlew --no-daemon --project-cache-dir /tmp/<service>-projcache bootRun`
+
+## 인프라 요약
+### Docker Compose
+- 목적: 로컬 통합 실행 기준점
+- 현재: MSSQL + 4개 서비스 placeholder
+- 다음 단계: 실제 앱 이미지, 시크릿 분리, 헬스체크 강화
+
+### Kubernetes Base
+- 경로: `infra/k8s/base`
+- 포함: `namespace`, `*-deployment`, `*-service`
+- 현재 검증:
+  - `kubectl apply --dry-run=client --validate=false -f infra/k8s/base`
+- 다음 단계: ConfigMap/Secret, Probe, HPA, Ingress
+
+## 문서
+- 인덱스: [`docs/docs.md`](./docs/docs.md)
+- PRD: [`docs/prd.md`](./docs/prd.md)
+- Architecture: [`docs/architecture.md`](./docs/architecture.md)
+- ERD: [`docs/erd.md`](./docs/erd.md)
+- API: [`docs/api.md`](./docs/api.md)
+- UI: [`docs/ui.md`](./docs/ui.md)
+
+## 프론트엔드 구조
+프론트엔드는 요청하신 대로 루트로 평탄화했습니다.
+실행 파일(`package.json`, `src`, `vite.config.ts`, `index.html`)은 루트에서 직접 동작합니다.
 
 ## 저장소 구조
 ```text
 SmartDoc_AI/
 ├── README.md
-├── smartdoc-ai/                # 기존 프론트엔드
-├── backend/                    # Spring Boot MSA 템플릿
-├── infra/                      # Docker + Kubernetes 템플릿
-└── docs/                       # 아키텍처/ERD/API/UI 산출물
+├── package.json                # 프론트엔드 실행 단위(루트)
+├── src/
+├── backend/                    # 백엔드 서비스 코드
+├── infra/                      # Docker/K8s 매니페스트
+└── docs/                       # 역할별 문서(.md)
 ```
-
-## 로컬 실행 참고
-- 인프라 우선 절차: [`infra/README.md`](./infra/README.md)
-- 백엔드 우선 절차: [`backend/README.md`](./backend/README.md)
-- 문서 산출물 절차: [`docs/docs.md`](./docs/docs.md)

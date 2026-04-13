@@ -10,5 +10,5 @@ coverage/
 .codex
 
 # Local binaries and tooling caches
-smartdoc-ai/minikube-linux-amd64
+minikube-linux-amd64
 backend/services/*/.gradle/
