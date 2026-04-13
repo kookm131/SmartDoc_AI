@@ -23,10 +23,10 @@ SmartDoc AI는 비정형 문서를 AI로 분석하고 후속 업무를 자동화
 2. 백엔드 서비스 점검
    - [`backend/README.md`](./backend/README.md)
 3. 산출물 문서 정리
-   - [`docs/README.md`](./docs/README.md)
+   - [`docs/docs.md`](./docs/docs.md)
 4. 제품/PRD 문맥 확인
-   - [`smartdoc-ai/docu/README.md`](./smartdoc-ai/docu/README.md)
-   - [`smartdoc-ai/docu/PRD.md`](./smartdoc-ai/docu/PRD.md)
+   - [`docs/product-context.md`](./docs/product-context.md)
+   - [`docs/prd.md`](./docs/prd.md)
 
 ## 실행 방법 (Quick Start)
 ### 1) 프론트엔드 실행
@@ -88,4 +88,4 @@ SmartDoc_AI/
 ## 로컬 실행 참고
 - 인프라 우선 절차: [`infra/README.md`](./infra/README.md)
 - 백엔드 우선 절차: [`backend/README.md`](./backend/README.md)
-- 문서 산출물 절차: [`docs/README.md`](./docs/README.md)
+- 문서 산출물 절차: [`docs/docs.md`](./docs/docs.md)

@@ -23,13 +23,13 @@
 
 ## 실행/검증 순서
 1. 아키텍처 문서 정리
-   - [`docs/architecture/README.md`](./architecture/README.md)
+   - [`docs/architecture/architecture.md`](./architecture/architecture.md)
 2. ERD/도메인 모델 정리
-   - [`docs/erd/README.md`](./erd/README.md)
+   - [`docs/erd/erd.md`](./erd/erd.md)
 3. API 계약 정리
-   - [`docs/api/README.md`](./api/README.md)
+   - [`docs/api/api.md`](./api/api.md)
 4. UI 캡처/기록 정리
-   - [`docs/ui/README.md`](./ui/README.md)
+   - [`docs/ui/ui.md`](./ui/ui.md)
 
 ## 다음 단계
 - PRD 항목과 산출물 매핑표 추가

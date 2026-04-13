@@ -13,8 +13,8 @@
 - 시나리오별 성공/실패 상태 스냅샷 체계화
 
 ## 선행 조건
-1. API/도메인 흐름 확인: [`docs/api/README.md`](../api/README.md)
-2. 프론트엔드 컨텍스트 확인: [`smartdoc-ai/docu/README.md`](../../smartdoc-ai/docu/README.md)
+1. API/도메인 흐름 확인: [`docs/api/api.md`](../api/api.md)
+2. 프론트엔드 컨텍스트 확인: [`docs/product-context.md`](../product-context.md)
 
 ## 실행/검증 순서
 1. 화면 목록 최신화 (`screen-inventory.md`)

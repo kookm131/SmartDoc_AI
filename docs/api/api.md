@@ -15,7 +15,7 @@
 
 ## 선행 조건
 1. 서비스 범위 확인: [`backend/README.md`](../../backend/README.md)
-2. 도메인/데이터 모델 확인: [`docs/erd/README.md`](../erd/README.md)
+2. 도메인/데이터 모델 확인: [`docs/erd/erd.md`](../erd/erd.md)
 
 ## 실행/검증 순서
 1. 엔드포인트 목록 정리 (`openapi-summary.md`)

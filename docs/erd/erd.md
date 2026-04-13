@@ -14,7 +14,7 @@
 
 ## 선행 조건
 1. 서비스 책임 확인: [`backend/README.md`](../../backend/README.md)
-2. 아키텍처 흐름 확인: [`docs/architecture/README.md`](../architecture/README.md)
+2. 아키텍처 흐름 확인: [`docs/architecture/architecture.md`](../architecture/architecture.md)
 
 ## 실행/검증 순서
 1. 논리 모델 정리 (`logical-model.md`)

@@ -23,9 +23,9 @@
 - 키워드/규칙 기반 알림 자동화
 
 ## 참고 문서
-- 루트 온보딩: [`README.md`](../../README.md)
-- PRD 원문: [`PRD.md`](./PRD.md)
-- 아키텍처 산출물: [`docs/architecture/README.md`](../../docs/architecture/README.md)
+- 루트 온보딩: [`README.md`](../README.md)
+- PRD 원문: [`docs/prd.md`](./prd.md)
+- 아키텍처 산출물: [`docs/architecture/architecture.md`](./architecture/architecture.md)
 
 ## 다음 단계
 - PRD 항목별 구현 상태 매핑표 추가
