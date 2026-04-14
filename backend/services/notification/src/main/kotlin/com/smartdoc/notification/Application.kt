@@ -1,8 +1,14 @@
 package com.smartdoc.notification
 
+import jakarta.persistence.Column
+import jakarta.persistence.Entity
+import jakarta.persistence.Id
+import jakarta.persistence.PrePersist
+import jakarta.persistence.Table
 import jakarta.servlet.http.HttpServletRequest
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
+import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.stereotype.Service
@@ -17,7 +23,6 @@ import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import java.time.Instant
 import java.util.UUID
-import java.util.concurrent.ConcurrentHashMap
 
 @SpringBootApplication
 class Application
@@ -61,34 +66,77 @@ data class ApiErrorResponse(
 
 class ResourceNotFoundException(message: String) : RuntimeException(message)
 
-@Service
-class NotificationMemoryStore {
-    private val storage = ConcurrentHashMap<String, NotificationEventResponse>()
+@Entity
+@Table(name = "notification_events")
+class NotificationEventEntity(
+    @Id
+    @Column(length = 36)
+    var id: String = UUID.randomUUID().toString(),
 
+    @Column(name = "document_id", nullable = false, length = 36)
+    var documentId: String = "",
+
+    @Column(nullable = false, length = 32)
+    var channel: String = "",
+
+    @Column(nullable = false, length = 1024)
+    var message: String = "",
+
+    @Column(nullable = false, length = 32)
+    var status: String = "DISPATCHED",
+
+    @Column(name = "created_at", nullable = false)
+    var createdAt: Instant = Instant.now()
+) {
+    @PrePersist
+    fun onCreate() {
+        createdAt = Instant.now()
+    }
+}
+
+interface NotificationEventRepository : JpaRepository<NotificationEventEntity, String>
+
+@Service
+class NotificationService(
+    private val notificationEventRepository: NotificationEventRepository
+) {
     fun create(request: NotificationDispatchRequest): NotificationEventResponse {
-        val created = NotificationEventResponse(
-            eventId = UUID.randomUUID().toString(),
-            documentId = request.documentId.trim(),
-            channel = request.channel.trim().lowercase(),
-            message = request.message.trim(),
-            status = "DISPATCHED",
-            createdAt = Instant.now()
+        val saved = notificationEventRepository.save(
+            NotificationEventEntity(
+                documentId = request.documentId.trim(),
+                channel = request.channel.trim().lowercase(),
+                message = request.message.trim(),
+                status = "DISPATCHED"
+            )
         )
-        storage[created.eventId] = created
-        return created
+        return toResponse(saved)
     }
 
     fun get(eventId: String): NotificationEventResponse =
-        storage[eventId] ?: throw ResourceNotFoundException("notification event not found: $eventId")
+        notificationEventRepository.findById(eventId)
+            .map(::toResponse)
+            .orElseThrow { ResourceNotFoundException("notification event not found: $eventId") }
 
     fun list(): List<NotificationEventResponse> =
-        storage.values.sortedByDescending { it.createdAt }
+        notificationEventRepository.findAll()
+            .sortedByDescending { it.createdAt }
+            .map(::toResponse)
+
+    private fun toResponse(entity: NotificationEventEntity): NotificationEventResponse =
+        NotificationEventResponse(
+            eventId = entity.id,
+            documentId = entity.documentId,
+            channel = entity.channel,
+            message = entity.message,
+            status = entity.status,
+            createdAt = entity.createdAt
+        )
 }
 
 @RestController
 @RequestMapping("/api/v1/notifications")
 class NotificationController(
-    private val store: NotificationMemoryStore
+    private val notificationService: NotificationService
 ) {
     @PostMapping("/dispatch")
     @ResponseStatus(HttpStatus.CREATED)
@@ -96,17 +144,17 @@ class NotificationController(
         require(request.documentId.isNotBlank()) { "documentId must not be blank" }
         require(request.channel.isNotBlank()) { "channel must not be blank" }
         require(request.message.isNotBlank()) { "message must not be blank" }
-        return store.create(request)
+        return notificationService.create(request)
     }
 
     @GetMapping("/events/{id}")
     fun getEvent(@PathVariable id: String): NotificationEventResponse {
         require(id.isNotBlank()) { "id must not be blank" }
-        return store.get(id)
+        return notificationService.get(id)
     }
 
     @GetMapping("/events")
-    fun listEvents(): List<NotificationEventResponse> = store.list()
+    fun listEvents(): List<NotificationEventResponse> = notificationService.list()
 }
 
 @RestControllerAdvice
@@ -137,6 +185,21 @@ class ApiExceptionHandler {
                 path = request.requestURI,
                 code = "RESOURCE_NOT_FOUND",
                 message = ex.message ?: "resource not found",
+                traceId = UUID.randomUUID().toString()
+            )
+        )
+
+    @ExceptionHandler(Exception::class)
+    fun handleUnexpectedError(
+        ex: Exception,
+        request: HttpServletRequest
+    ): ResponseEntity<ApiErrorResponse> =
+        ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
+            ApiErrorResponse(
+                timestamp = Instant.now(),
+                path = request.requestURI,
+                code = "INTERNAL_ERROR",
+                message = ex.message ?: "unexpected server error",
                 traceId = UUID.randomUUID().toString()
             )
         )

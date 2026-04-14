@@ -11,7 +11,7 @@
 ## 배포 가정
 - Amazon EKS + ALB
 - CloudWatch 로그 수집
-- 로컬 검증: Docker Compose + `infra/k8s/base`
+- 로컬 검증: Docker Compose + kind/Kubernetes `infra/k8s/base`
 
 ## 데이터 흐름
 1. 업로드 요청 수신
@@ -21,7 +21,10 @@
 5. 규칙 기반 알림 발송
 
 ## 현재 단계와 연동 계획
-- 현재: 로컬 개발 단계(H2/JPA, Kubernetes base 매니페스트)
+- 현재: 로컬 개발 단계(H2/JPA, 실제 Docker 이미지, Kubernetes base 매니페스트)
+- 로컬 컨테이너 검증:
+  - Docker Compose: `infra/docker/docker-compose.yml`
+  - Kubernetes: `smartdoc/*:local` 이미지를 kind/minikube에 로드 후 `infra/k8s/base` 적용
 - 다음: AWS/EKS 연동
   - RDBMS를 MSSQL(RDS 등)로 전환
   - S3/Textract/Comprehend 연동 어댑터 추가

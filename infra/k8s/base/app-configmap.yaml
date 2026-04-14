@@ -5,5 +5,7 @@ metadata:
   namespace: smartdoc
 data:
   SPRING_PROFILES_ACTIVE: local
-  JAVA_TOOL_OPTIONS: "-XX:+UseContainerSupport -XX:MaxRAMPercentage=75"
+  JAVA_TOOL_OPTIONS: "-Xms128m -Xmx384m"
   SMARTDOC_DOCUMENT_BASE_URL: http://smartdoc-document:8081
+  SMARTDOC_DOCUMENT_CONNECT_TIMEOUT_MS: "1000"
+  SMARTDOC_DOCUMENT_READ_TIMEOUT_MS: "2000"

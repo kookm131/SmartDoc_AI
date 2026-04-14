@@ -3,10 +3,13 @@ import {
   ApiErrorResponse,
   DocumentCreateInput,
   DocumentRecord,
+  NotificationDispatchInput,
+  NotificationEventRecord,
 } from './types';
 
 const DOCUMENT_API_BASE = '/api/document';
 const ANALYSIS_API_BASE = '/api/analysis';
+const NOTIFICATION_API_BASE = '/api/notification';
 
 function isApiError(value: unknown): value is ApiErrorResponse {
   if (!value || typeof value !== 'object') {
@@ -79,4 +82,15 @@ export async function createAnalysisJob(documentId: string): Promise<AnalysisJob
 
 export async function getAnalysisJob(jobId: string): Promise<AnalysisJobRecord> {
   return request<AnalysisJobRecord>(`${ANALYSIS_API_BASE}/analysis/jobs/${jobId}`);
+}
+
+export async function dispatchNotification(input: NotificationDispatchInput): Promise<NotificationEventRecord> {
+  return request<NotificationEventRecord>(`${NOTIFICATION_API_BASE}/notifications/dispatch`, {
+    method: 'POST',
+    body: JSON.stringify(input),
+  });
+}
+
+export async function listNotificationEvents(): Promise<NotificationEventRecord[]> {
+  return request<NotificationEventRecord[]>(`${NOTIFICATION_API_BASE}/notifications/events`);
 }

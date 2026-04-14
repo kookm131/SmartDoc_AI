@@ -17,6 +17,7 @@ import org.springframework.stereotype.Service
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
+import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -57,6 +58,10 @@ data class DocumentCreateResponse(
     val status: String,
     val createdAt: Instant,
     val updatedAt: Instant
+)
+
+data class DocumentStatusUpdateRequest(
+    val status: String
 )
 
 data class ApiErrorResponse(
@@ -194,6 +199,17 @@ class DocumentService(
         .sortedByDescending { it.createdAt }
         .map(::toResponse)
 
+    fun updateStatus(documentId: String, request: DocumentStatusUpdateRequest): DocumentCreateResponse {
+        val normalizedStatus = request.status.trim().uppercase()
+        require(normalizedStatus in ALLOWED_STATUSES) { "unsupported document status: $normalizedStatus" }
+
+        val found = documentRepository.findById(documentId)
+            .orElseThrow { ResourceNotFoundException("document not found: $documentId") }
+
+        found.status = normalizedStatus
+        return toResponse(documentRepository.save(found))
+    }
+
     private fun toResponse(entity: DocumentEntity): DocumentCreateResponse =
         DocumentCreateResponse(
             documentId = entity.id,
@@ -204,6 +220,15 @@ class DocumentService(
             createdAt = entity.createdAt,
             updatedAt = entity.updatedAt
         )
+
+    companion object {
+        private val ALLOWED_STATUSES = setOf(
+            "RECEIVED",
+            "ANALYSIS_QUEUED",
+            "ANALYSIS_PROCESSING",
+            "ANALYSIS_COMPLETED"
+        )
+    }
 }
 
 @RestController
@@ -229,6 +254,22 @@ class DocumentController(
 
     @GetMapping
     fun listDocuments(): List<DocumentCreateResponse> = documentService.list()
+
+    @PatchMapping("/{id}/status")
+    fun updateDocumentStatus(
+        @PathVariable id: String,
+        @RequestBody request: DocumentStatusUpdateRequest
+    ): DocumentCreateResponse {
+        require(id.isNotBlank()) { "id must not be blank" }
+        require(request.status.isNotBlank()) { "status must not be blank" }
+        return documentService.updateStatus(id, request)
+    }
+
+    @PostMapping("/{id}/status")
+    fun postDocumentStatus(
+        @PathVariable id: String,
+        @RequestBody request: DocumentStatusUpdateRequest
+    ): DocumentCreateResponse = updateDocumentStatus(id, request)
 }
 
 @RestControllerAdvice
@@ -259,6 +300,21 @@ class ApiExceptionHandler {
                 path = request.requestURI,
                 code = "RESOURCE_NOT_FOUND",
                 message = ex.message ?: "resource not found",
+                traceId = UUID.randomUUID().toString()
+            )
+        )
+
+    @ExceptionHandler(Exception::class)
+    fun handleUnexpectedError(
+        ex: Exception,
+        request: HttpServletRequest
+    ): ResponseEntity<ApiErrorResponse> =
+        ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
+            ApiErrorResponse(
+                timestamp = Instant.now(),
+                path = request.requestURI,
+                code = "INTERNAL_ERROR",
+                message = ex.message ?: "unexpected server error",
                 traceId = UUID.randomUUID().toString()
             )
         )

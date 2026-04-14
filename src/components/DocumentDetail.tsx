@@ -12,7 +12,7 @@ import {
   LoaderCircle,
 } from 'lucide-react';
 import { motion } from 'motion/react';
-import { AnalysisJobRecord, ApiErrorResponse, DocumentRecord } from '../types';
+import { AnalysisJobRecord, ApiErrorResponse, DocumentRecord, NotificationEventRecord } from '../types';
 
 interface DocumentDetailProps {
   document: DocumentRecord;
@@ -20,6 +20,11 @@ interface DocumentDetailProps {
   onAnalyze: (documentId: string) => Promise<void>;
   analysisJob: AnalysisJobRecord | null;
   polling: boolean;
+  notificationEvents: NotificationEventRecord[];
+  loadingNotifications: boolean;
+  dispatchingNotification: boolean;
+  onDispatchNotification: (document: DocumentRecord) => Promise<void>;
+  onRefreshNotifications: () => Promise<void>;
   error: ApiErrorResponse | null;
 }
 
@@ -29,6 +34,11 @@ export default function DocumentDetail({
   onAnalyze,
   analysisJob,
   polling,
+  notificationEvents,
+  loadingNotifications,
+  dispatchingNotification,
+  onDispatchNotification,
+  onRefreshNotifications,
   error,
 }: DocumentDetailProps) {
   return (
@@ -145,12 +155,56 @@ export default function DocumentDetail({
                 <InsightCard title="상태 조회" content="백그라운드 폴링으로 최신 state 반영" type="tertiary" />
               </div>
             </div>
+
+            <div className="space-y-3">
+              <div className="flex items-center justify-between gap-2">
+                <div className="flex items-center gap-2">
+                  <MessageSquare className="text-primary w-5 h-5" />
+                  <h3 className="font-bold text-sm text-on-surface">알림 이벤트</h3>
+                </div>
+                <button
+                  onClick={() => void onRefreshNotifications()}
+                  className="text-xs font-bold text-primary hover:underline"
+                >
+                  새로고침
+                </button>
+              </div>
+              <div className="bg-surface-container-low p-4 rounded-xl border border-outline-variant/5 space-y-3">
+                {loadingNotifications && <p className="text-sm text-on-surface-variant">알림 이벤트를 불러오는 중...</p>}
+                {!loadingNotifications && notificationEvents.length === 0 && (
+                  <p className="text-sm text-on-surface-variant">아직 발송된 알림이 없습니다.</p>
+                )}
+                {!loadingNotifications &&
+                  notificationEvents.map((event) => (
+                    <div key={event.eventId} className="rounded-lg bg-surface-container-lowest p-3 text-sm">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-bold text-primary">{event.channel}</span>
+                        <span className="text-[11px] rounded-full bg-primary/10 text-primary px-2 py-0.5 font-bold">
+                          {event.status}
+                        </span>
+                      </div>
+                      <p className="mt-2 text-on-surface-variant">{event.message}</p>
+                      <p className="mt-2 text-[11px] text-on-surface-variant">
+                        {new Date(event.createdAt).toLocaleString('ko-KR')}
+                      </p>
+                    </div>
+                  ))}
+              </div>
+            </div>
           </div>
 
           <div className="p-6 border-t border-outline-variant/10 bg-white/80 backdrop-blur-md">
-            <button className="w-full flex items-center justify-center gap-2 bg-[#4A154B] text-white py-3 rounded-xl text-sm font-bold shadow-lg hover:shadow-xl active:scale-[0.98] transition-all">
-              <MessageSquare className="w-5 h-5" />
-              Slack으로 알림 보내기
+            <button
+              onClick={() => void onDispatchNotification(document)}
+              disabled={dispatchingNotification}
+              className="w-full flex items-center justify-center gap-2 bg-[#4A154B] text-white py-3 rounded-xl text-sm font-bold shadow-lg hover:shadow-xl active:scale-[0.98] transition-all disabled:opacity-60"
+            >
+              {dispatchingNotification ? (
+                <LoaderCircle className="w-5 h-5 animate-spin" />
+              ) : (
+                <MessageSquare className="w-5 h-5" />
+              )}
+              {dispatchingNotification ? '알림 발송 중...' : 'Slack으로 알림 보내기'}
             </button>
             <p className="mt-2 text-[10px] text-center text-on-surface-variant">긴급 채널로 분석 리포트가 즉시 공유됩니다.</p>
           </div>

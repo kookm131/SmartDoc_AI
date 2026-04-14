@@ -11,4 +11,5 @@ coverage/
 
 # Local binaries and tooling caches
 minikube-linux-amd64
+.gradle-local/
 backend/services/*/.gradle/

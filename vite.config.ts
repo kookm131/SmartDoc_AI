@@ -31,6 +31,11 @@ export default defineConfig(({ mode }) => {
           changeOrigin: true,
           rewrite: (apiPath) => apiPath.replace(/^\/api\/analysis/, '/api/v1'),
         },
+        '/api/notification': {
+          target: env.VITE_NOTIFICATION_API_TARGET || 'http://localhost:8083',
+          changeOrigin: true,
+          rewrite: (apiPath) => apiPath.replace(/^\/api\/notification/, '/api/v1'),
+        },
       },
     },
   };

@@ -20,8 +20,29 @@ SmartDoc AI는 비정형 문서를 AI로 분석하고 후속 업무를 자동화
 로컬 API 프록시:
 - `/api/document/*` -> `http://localhost:8081/api/v1/*`
 - `/api/analysis/*` -> `http://localhost:8082/api/v1/*`
+- `/api/notification/*` -> `http://localhost:8083/api/v1/*`
 
 ### 백엔드 (서비스별)
+메모리 부담을 줄이려면 필요한 서비스만 따로 켭니다.
+
+1. `scripts/run-service.sh document`
+2. `scripts/run-service.sh analysis`
+3. `scripts/run-service.sh notification`
+
+한 번에 켜야 할 때:
+
+```bash
+scripts/run-backend-local.sh
+```
+
+로컬 백엔드 실행 후 smoke 점검:
+
+```bash
+scripts/smoke-local.sh
+```
+
+직접 실행할 때:
+
 1. `cd backend/services/gateway` (또는 `document`, `analysis`, `notification`)
 2. `cp .env.example .env`
 3. `./gradlew bootRun`
@@ -33,10 +54,34 @@ SmartDoc AI는 비정형 문서를 AI로 분석하고 후속 업무를 자동화
 - notification `8083`
 
 ### 인프라 템플릿
-1. `cd infra/docker`
-2. `docker compose -f docker-compose.yml config`
-3. `docker compose -f docker-compose.yml up -d`
-4. `docker compose -f docker-compose.yml ps`
+Docker Compose로 실제 백엔드 앱 컨테이너 실행:
+
+```bash
+docker compose -f infra/docker/docker-compose.yml up --build
+```
+
+Compose 실행 후 smoke 점검:
+
+```bash
+scripts/smoke-local.sh
+```
+
+kind/minikube 기준 Kubernetes 실행:
+
+```bash
+scripts/build-images.sh
+scripts/load-k8s-images.sh
+scripts/deploy-k8s-local.sh
+scripts/smoke-k8s.sh
+```
+
+메모리 부담이 있으면 이미지만 서비스별로 나눠 빌드할 수 있습니다.
+
+```bash
+scripts/build-images.sh document
+scripts/build-images.sh analysis
+scripts/build-images.sh notification
+```
 
 ## 백엔드 요약
 - 공통 패턴: Spring Boot + Kotlin + Java 17
@@ -59,18 +104,28 @@ SmartDoc AI는 비정형 문서를 AI로 분석하고 후속 업무를 자동화
 - 환경 제약 우회 실행:
   - `GRADLE_USER_HOME=/tmp/.gradle ./gradlew --no-daemon --project-cache-dir /tmp/<service>-projcache bootRun`
 
+### 백엔드 테스트
+메모리 부담을 줄이려면 서비스별로 따로 실행합니다.
+
+```bash
+cd backend/services/document && ./gradlew test
+cd backend/services/analysis && ./gradlew test
+cd backend/services/notification && ./gradlew test
+```
+
 ## 인프라 요약
 ### Docker Compose
 - 목적: 로컬 통합 실행 기준점
-- 현재: MSSQL + 4개 서비스 placeholder
-- 다음 단계: 실제 앱 이미지, 시크릿 분리, 헬스체크 강화
+- 현재: H2 기반 실제 앱 이미지 빌드/실행
+- 다음 단계: 시크릿 분리, 운영 DB(MSSQL/RDS) 전환
 
 ### Kubernetes Base
 - 경로: `infra/k8s/base`
 - 포함: `namespace`, `*-deployment`, `*-service`
 - 현재 검증:
   - `kubectl apply --dry-run=client --validate=false -f infra/k8s/base`
-- 다음 단계: ConfigMap/Secret, Probe, HPA, Ingress
+- 로컬 Kubernetes 이미지: `smartdoc/*:local` (`kind` 또는 `minikube`에 로드)
+- 다음 단계: HPA, Ingress 컨트롤러 실제 연동, 운영 이미지 레지스트리 전환
 
 ## 문서
 - 인덱스: [`docs/docs.md`](./docs/docs.md)

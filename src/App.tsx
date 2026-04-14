@@ -4,13 +4,22 @@ import Layout from './components/Layout';
 import DocumentList from './components/DocumentList';
 import DocumentDetail from './components/DocumentDetail';
 import DashboardCards from './components/DashboardCards';
-import { createAnalysisJob, createDocument, getAnalysisJob, getDocumentById, listDocuments } from './api';
+import {
+  createAnalysisJob,
+  createDocument,
+  dispatchNotification,
+  getAnalysisJob,
+  getDocumentById,
+  listDocuments,
+  listNotificationEvents,
+} from './api';
 import {
   AnalysisJobRecord,
   ApiErrorResponse,
   DashboardStats,
   DocumentCreateInput,
   DocumentRecord,
+  NotificationEventRecord,
 } from './types';
 
 function toApiError(error: unknown): ApiErrorResponse {
@@ -56,6 +65,9 @@ export default function App() {
   const [selectedDoc, setSelectedDoc] = useState<DocumentRecord | null>(null);
   const [analysisByDocumentId, setAnalysisByDocumentId] = useState<Record<string, AnalysisJobRecord>>({});
   const [analysisPolling, setAnalysisPolling] = useState(false);
+  const [notificationEvents, setNotificationEvents] = useState<NotificationEventRecord[]>([]);
+  const [dispatchingNotification, setDispatchingNotification] = useState(false);
+  const [loadingNotifications, setLoadingNotifications] = useState(false);
 
   const [apiError, setApiError] = useState<ApiErrorResponse | null>(null);
 
@@ -93,12 +105,26 @@ export default function App() {
     void loadDocuments();
   }, []);
 
+  const loadNotificationEvents = async () => {
+    setLoadingNotifications(true);
+    try {
+      const response = await listNotificationEvents();
+      setNotificationEvents(response);
+      setApiError(null);
+    } catch (error) {
+      setApiError(toApiError(error));
+    } finally {
+      setLoadingNotifications(false);
+    }
+  };
+
   const handleDocumentClick = async (doc: DocumentRecord) => {
     try {
       const detail = await getDocumentById(doc.documentId);
       setSelectedDoc(detail);
       setApiError(null);
       setActiveTab('detail');
+      void loadNotificationEvents();
     } catch (error) {
       setApiError(toApiError(error));
     }
@@ -143,6 +169,23 @@ export default function App() {
       setApiError(toApiError(error));
     } finally {
       setAnalysisPolling(false);
+    }
+  };
+
+  const handleDispatchNotification = async (document: DocumentRecord) => {
+    setDispatchingNotification(true);
+    try {
+      const created = await dispatchNotification({
+        documentId: document.documentId,
+        channel: 'slack',
+        message: `[SmartDoc AI] ${document.filename} 분석 결과를 확인해 주세요.`,
+      });
+      setNotificationEvents((prev) => [created, ...prev.filter((event) => event.eventId !== created.eventId)]);
+      setApiError(null);
+    } catch (error) {
+      setApiError(toApiError(error));
+    } finally {
+      setDispatchingNotification(false);
     }
   };
 
@@ -219,6 +262,11 @@ export default function App() {
           onAnalyze={handleStartAnalysis}
           analysisJob={analysisByDocumentId[selectedDoc.documentId] ?? null}
           polling={analysisPolling}
+          notificationEvents={notificationEvents.filter((event) => event.documentId === selectedDoc.documentId)}
+          loadingNotifications={loadingNotifications}
+          dispatchingNotification={dispatchingNotification}
+          onDispatchNotification={handleDispatchNotification}
+          onRefreshNotifications={loadNotificationEvents}
           error={apiError}
         />
       )}

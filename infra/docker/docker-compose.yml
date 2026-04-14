@@ -1,52 +1,70 @@
-version: "3.9"
-
 services:
-  mssql:
-    image: mcr.microsoft.com/mssql/server:2022-latest
-    container_name: smartdoc-mssql
-    environment:
-      ACCEPT_EULA: "Y"
-      MSSQL_SA_PASSWORD: "YourStrong!Passw0rd"
-    ports:
-      - "1433:1433"
-    healthcheck:
-      test: ["CMD", "bash", "-c", "/opt/mssql-tools18/bin/sqlcmd -S localhost -U sa -P YourStrong!Passw0rd -Q 'SELECT 1' -C"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-
   gateway:
-    image: eclipse-temurin:17-jre
+    build:
+      context: ../../backend/services/gateway
+    image: smartdoc/gateway:local
     container_name: smartdoc-gateway
-    command: ["bash", "-lc", "echo 'gateway 플레이스홀더'; sleep infinity"]
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx384m"
     ports:
       - "8080:8080"
-    depends_on:
-      - mssql
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
 
   document:
-    image: eclipse-temurin:17-jre
+    build:
+      context: ../../backend/services/document
+    image: smartdoc/document:local
     container_name: smartdoc-document
-    command: ["bash", "-lc", "echo 'document 플레이스홀더'; sleep infinity"]
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx384m"
     ports:
       - "8081:8081"
-    depends_on:
-      - mssql
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8081/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
 
   analysis:
-    image: eclipse-temurin:17-jre
+    build:
+      context: ../../backend/services/analysis
+    image: smartdoc/analysis:local
     container_name: smartdoc-analysis
-    command: ["bash", "-lc", "echo 'analysis 플레이스홀더'; sleep infinity"]
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      SMARTDOC_DOCUMENT_BASE_URL: http://document:8081
+      SMARTDOC_DOCUMENT_CONNECT_TIMEOUT_MS: "1000"
+      SMARTDOC_DOCUMENT_READ_TIMEOUT_MS: "2000"
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx384m"
     ports:
       - "8082:8082"
     depends_on:
-      - mssql
+      document:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8082/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12
 
   notification:
-    image: eclipse-temurin:17-jre
+    build:
+      context: ../../backend/services/notification
+    image: smartdoc/notification:local
     container_name: smartdoc-notification
-    command: ["bash", "-lc", "echo 'notification 플레이스홀더'; sleep infinity"]
+    environment:
+      SPRING_PROFILES_ACTIVE: local
+      JAVA_TOOL_OPTIONS: "-Xms128m -Xmx384m"
     ports:
       - "8083:8083"
-    depends_on:
-      - mssql
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8083/actuator/health || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 12

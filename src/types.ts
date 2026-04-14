@@ -24,6 +24,15 @@ export interface AnalysisJobRecord {
   analysisProvider: string;
 }
 
+export interface NotificationEventRecord {
+  eventId: string;
+  documentId: string;
+  channel: string;
+  message: string;
+  status: string;
+  createdAt: string;
+}
+
 export interface DashboardStats {
   weeklyCount: number;
   weeklyChange: number;
@@ -35,4 +44,10 @@ export interface DocumentCreateInput {
   filename: string;
   fileKey: string;
   contentType?: string;
+}
+
+export interface NotificationDispatchInput {
+  documentId: string;
+  channel: string;
+  message: string;
 }
