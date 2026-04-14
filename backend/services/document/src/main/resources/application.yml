@@ -19,6 +19,9 @@ spring:
         format_sql: true
     show-sql: true
 
+smartdoc:
+  local-upload-dir: ${SMARTDOC_LOCAL_UPLOAD_DIR:.smartdoc/uploads}
+
 logging:
   level:
     root: INFO

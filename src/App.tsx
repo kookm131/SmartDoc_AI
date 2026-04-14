@@ -1,25 +1,40 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { FileText } from 'lucide-react';
 import Layout from './components/Layout';
+import AuthScreen from './components/AuthScreen';
 import DocumentList from './components/DocumentList';
 import DocumentDetail from './components/DocumentDetail';
 import DashboardCards from './components/DashboardCards';
+import NotificationRulesPanel from './components/NotificationRulesPanel';
 import {
+  clearStoredAccessToken,
   createAnalysisJob,
   createDocument,
+  createNotificationRule,
   dispatchNotification,
   getAnalysisJob,
+  getCurrentUser,
   getDocumentById,
+  getStoredAccessToken,
   listDocuments,
   listNotificationEvents,
+  listNotificationRules,
+  login,
+  logout,
+  signup,
 } from './api';
 import {
   AnalysisJobRecord,
   ApiErrorResponse,
+  AuthUser,
   DashboardStats,
   DocumentCreateInput,
   DocumentRecord,
+  LoginInput,
   NotificationEventRecord,
+  NotificationRuleCreateInput,
+  NotificationRuleRecord,
+  SignupInput,
 } from './types';
 
 function toApiError(error: unknown): ApiErrorResponse {
@@ -57,6 +72,9 @@ const POLLING_INTERVAL_MS = 2000;
 const POLLING_COUNT_LIMIT = 5;
 
 export default function App() {
+  const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
+  const [checkingAuth, setCheckingAuth] = useState(true);
+  const [submittingAuth, setSubmittingAuth] = useState(false);
   const [activeTab, setActiveTab] = useState('list');
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [loadingDocuments, setLoadingDocuments] = useState(true);
@@ -66,8 +84,11 @@ export default function App() {
   const [analysisByDocumentId, setAnalysisByDocumentId] = useState<Record<string, AnalysisJobRecord>>({});
   const [analysisPolling, setAnalysisPolling] = useState(false);
   const [notificationEvents, setNotificationEvents] = useState<NotificationEventRecord[]>([]);
+  const [notificationRules, setNotificationRules] = useState<NotificationRuleRecord[]>([]);
   const [dispatchingNotification, setDispatchingNotification] = useState(false);
   const [loadingNotifications, setLoadingNotifications] = useState(false);
+  const [loadingNotificationRules, setLoadingNotificationRules] = useState(false);
+  const [submittingNotificationRule, setSubmittingNotificationRule] = useState(false);
 
   const [apiError, setApiError] = useState<ApiErrorResponse | null>(null);
 
@@ -102,8 +123,74 @@ export default function App() {
   };
 
   useEffect(() => {
-    void loadDocuments();
+    const token = getStoredAccessToken();
+    if (!token) {
+      setCheckingAuth(false);
+      setLoadingDocuments(false);
+      return;
+    }
+
+    getCurrentUser()
+      .then((user) => {
+        setCurrentUser(user);
+        setApiError(null);
+      })
+      .catch((error) => {
+        clearStoredAccessToken();
+        setCurrentUser(null);
+        setApiError(toApiError(error));
+      })
+      .finally(() => setCheckingAuth(false));
   }, []);
+
+  useEffect(() => {
+    if (currentUser) {
+      void loadDocuments();
+    }
+  }, [currentUser]);
+
+  const handleLogin = async (input: LoginInput) => {
+    setSubmittingAuth(true);
+    try {
+      const session = await login(input);
+      setCurrentUser(session.user);
+      setApiError(null);
+    } catch (error) {
+      setApiError(toApiError(error));
+    } finally {
+      setSubmittingAuth(false);
+    }
+  };
+
+  const handleSignup = async (input: SignupInput) => {
+    setSubmittingAuth(true);
+    try {
+      const session = await signup(input);
+      setCurrentUser(session.user);
+      setApiError(null);
+    } catch (error) {
+      setApiError(toApiError(error));
+    } finally {
+      setSubmittingAuth(false);
+    }
+  };
+
+  const handleLogout = async () => {
+    try {
+      await logout();
+    } catch (error) {
+      setApiError(toApiError(error));
+    } finally {
+      clearStoredAccessToken();
+      setCurrentUser(null);
+      setDocuments([]);
+      setSelectedDoc(null);
+      setAnalysisByDocumentId({});
+      setNotificationEvents([]);
+      setNotificationRules([]);
+      setActiveTab('list');
+    }
+  };
 
   const loadNotificationEvents = async () => {
     setLoadingNotifications(true);
@@ -117,6 +204,25 @@ export default function App() {
       setLoadingNotifications(false);
     }
   };
+
+  const loadNotificationRules = async () => {
+    setLoadingNotificationRules(true);
+    try {
+      const response = await listNotificationRules();
+      setNotificationRules(response);
+      setApiError(null);
+    } catch (error) {
+      setApiError(toApiError(error));
+    } finally {
+      setLoadingNotificationRules(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === 'rules') {
+      void loadNotificationRules();
+    }
+  }, [activeTab]);
 
   const handleDocumentClick = async (doc: DocumentRecord) => {
     try {
@@ -189,8 +295,50 @@ export default function App() {
     }
   };
 
+  const handleCreateNotificationRule = async (input: NotificationRuleCreateInput) => {
+    setSubmittingNotificationRule(true);
+    try {
+      const saved = await createNotificationRule(input);
+      setNotificationRules((prev) => [
+        saved,
+        ...prev.filter((rule) => rule.ruleId !== saved.ruleId),
+      ].sort((a, b) => a.keyword.localeCompare(b.keyword, 'ko-KR') || a.channel.localeCompare(b.channel, 'ko-KR')));
+      setApiError(null);
+    } catch (error) {
+      setApiError(toApiError(error));
+    } finally {
+      setSubmittingNotificationRule(false);
+    }
+  };
+
+  if (checkingAuth) {
+    return (
+      <main className="min-h-screen bg-background text-on-background flex items-center justify-center">
+        <div className="rounded-2xl bg-surface-container-lowest border border-outline-variant/20 px-6 py-5 shadow-lg">
+          <p className="text-sm font-bold text-on-surface">로그인 상태를 확인하는 중입니다...</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <AuthScreen
+        submitting={submittingAuth}
+        latestError={apiError}
+        onLogin={handleLogin}
+        onSignup={handleSignup}
+      />
+    );
+  }
+
   return (
-    <Layout activeTab={activeTab} onTabChange={setActiveTab}>
+    <Layout
+      activeTab={activeTab}
+      onTabChange={setActiveTab}
+      currentUser={currentUser}
+      onLogout={() => void handleLogout()}
+    >
       {activeTab === 'dashboard' && (
         <div className="flex flex-col gap-8">
           <header>
@@ -253,6 +401,16 @@ export default function App() {
           />
           <DashboardCards stats={dashboardStats} />
         </div>
+      )}
+
+      {activeTab === 'rules' && (
+        <NotificationRulesPanel
+          rules={notificationRules}
+          loading={loadingNotificationRules}
+          submitting={submittingNotificationRule}
+          latestError={apiError}
+          onCreateRule={handleCreateNotificationRule}
+        />
       )}
 
       {activeTab === 'detail' && selectedDoc && (

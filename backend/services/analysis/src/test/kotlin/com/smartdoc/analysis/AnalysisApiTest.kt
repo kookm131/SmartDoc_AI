@@ -18,6 +18,7 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import java.time.Instant
 
 @SpringBootTest
 @AutoConfigureMockMvc
@@ -28,25 +29,48 @@ class AnalysisApiTest {
     @Autowired
     private lateinit var analysisJobRepository: AnalysisJobRepository
 
+    @Autowired
+    private lateinit var keywordDetectionRepository: KeywordDetectionRepository
+
     @MockBean
     private lateinit var documentLookupPort: DocumentLookupPort
 
     @MockBean
     private lateinit var aiAnalysisPort: AiAnalysisPort
 
+    @MockBean
+    private lateinit var notificationDispatchPort: NotificationDispatchPort
+
     @BeforeEach
     fun setUp() {
+        keywordDetectionRepository.deleteAll()
         analysisJobRepository.deleteAll()
-        reset(documentLookupPort, aiAnalysisPort)
+        reset(documentLookupPort, aiAnalysisPort, notificationDispatchPort)
     }
 
     @Test
     fun `creates analysis job and advances local state while syncing document status`() {
         val documentId = "11111111-1111-1111-1111-111111111111"
         `when`(documentLookupPort.exists(documentId)).thenReturn(true)
+        `when`(documentLookupPort.get(documentId)).thenReturn(
+            DocumentInfo(
+                documentId = documentId,
+                filename = "contract-review.txt",
+                fileKey = "uploads/contract-review.txt",
+                contentType = "text/plain"
+            )
+        )
+        `when`(documentLookupPort.readTextContent(documentId)).thenReturn("긴급 계약 검토 알림이 필요한 문서입니다.")
         `when`(aiAnalysisPort.submit(AiAnalysisCommand(documentId))).thenReturn(
             AiAnalysisResult(state = "QUEUED", provider = "local-stub")
         )
+        `when`(
+            notificationDispatchPort.dispatchAnalysisCompleted(
+                documentId,
+                listOf("계약", "검토", "알림", "긴급"),
+                98
+            )
+        ).thenReturn(true)
 
         val created = mockMvc.perform(
             post("/api/v1/analysis/jobs")
@@ -66,19 +90,47 @@ class AnalysisApiTest {
 
         verify(documentLookupPort).updateStatus(documentId, "ANALYSIS_QUEUED")
 
-        Thread.sleep(2100)
+        analysisJobRepository.findById(jobId).get().also {
+            it.createdAt = Instant.now().minusSeconds(2)
+            analysisJobRepository.save(it)
+        }
+
         mockMvc.perform(get("/api/v1/analysis/jobs/$jobId"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.state").value("PROCESSING"))
 
         verify(documentLookupPort, atLeastOnce()).updateStatus(documentId, "ANALYSIS_PROCESSING")
 
-        Thread.sleep(2200)
+        analysisJobRepository.findById(jobId).get().also {
+            it.createdAt = Instant.now().minusSeconds(4)
+            analysisJobRepository.save(it)
+        }
+
         mockMvc.perform(get("/api/v1/analysis/jobs/$jobId"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.state").value("COMPLETED"))
+            .andExpect(jsonPath("$.resultSummary").value("로컬 분석이 완료되었습니다. 업로드된 텍스트 파일 내용 기준으로 계약, 검토, 알림, 긴급 키워드를 감지했습니다."))
+            .andExpect(jsonPath("$.riskScore").value(98))
+            .andExpect(jsonPath("$.keywords[0]").value("계약"))
+
+        check(keywordDetectionRepository.findByAnalysisJobId(jobId).size == 4) {
+            "expected 4 keyword detections"
+        }
+
+        mockMvc.perform(get("/api/v1/analysis/jobs/$jobId"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.keywords[0]").value("계약"))
+
+        check(keywordDetectionRepository.findByAnalysisJobId(jobId).size == 4) {
+            "keyword detections should not be duplicated"
+        }
 
         verify(documentLookupPort, atLeastOnce()).updateStatus(documentId, "ANALYSIS_COMPLETED")
+        verify(notificationDispatchPort).dispatchAnalysisCompleted(
+            documentId,
+            listOf("계약", "검토", "알림", "긴급"),
+            98
+        )
     }
 
     @Test

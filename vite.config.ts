@@ -21,6 +21,11 @@ export default defineConfig(({ mode }) => {
       // Do not modify-file watching is disabled to prevent flickering during agent edits.
       hmr: process.env.DISABLE_HMR !== 'true',
       proxy: {
+        '/api/gateway': {
+          target: env.VITE_GATEWAY_API_TARGET || 'http://localhost:8080',
+          changeOrigin: true,
+          rewrite: (apiPath) => apiPath.replace(/^\/api\/gateway/, '/api/v1'),
+        },
         '/api/document': {
           target: env.VITE_DOCUMENT_API_TARGET || 'http://localhost:8081',
           changeOrigin: true,

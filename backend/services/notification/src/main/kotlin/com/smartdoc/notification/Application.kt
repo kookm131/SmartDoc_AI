@@ -5,9 +5,12 @@ import jakarta.persistence.Entity
 import jakarta.persistence.Id
 import jakarta.persistence.PrePersist
 import jakarta.persistence.Table
+import jakarta.persistence.UniqueConstraint
 import jakarta.servlet.http.HttpServletRequest
+import org.springframework.boot.CommandLineRunner
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
+import org.springframework.context.annotation.Bean
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
@@ -25,7 +28,20 @@ import java.time.Instant
 import java.util.UUID
 
 @SpringBootApplication
-class Application
+class Application {
+    @Bean
+    fun seedNotificationRules(notificationRuleRepository: NotificationRuleRepository) = CommandLineRunner {
+        if (!notificationRuleRepository.existsByKeywordAndChannel("계약", "slack")) {
+            notificationRuleRepository.save(
+                NotificationRuleEntity(
+                    keyword = "계약",
+                    channel = "slack",
+                    enabled = true
+                )
+            )
+        }
+    }
+}
 
 fun main(args: Array<String>) {
     runApplication<Application>(*args)
@@ -43,8 +59,10 @@ class HealthController {
 
 data class NotificationDispatchRequest(
     val documentId: String,
-    val channel: String,
-    val message: String
+    val channel: String? = null,
+    val message: String? = null,
+    val keywords: List<String> = emptyList(),
+    val riskScore: Int? = null
 )
 
 data class NotificationEventResponse(
@@ -53,6 +71,20 @@ data class NotificationEventResponse(
     val channel: String,
     val message: String,
     val status: String,
+    val createdAt: Instant
+)
+
+data class NotificationRuleCreateRequest(
+    val keyword: String,
+    val channel: String,
+    val enabled: Boolean = true
+)
+
+data class NotificationRuleResponse(
+    val ruleId: String,
+    val keyword: String,
+    val channel: String,
+    val enabled: Boolean,
     val createdAt: Instant
 )
 
@@ -96,20 +128,111 @@ class NotificationEventEntity(
 
 interface NotificationEventRepository : JpaRepository<NotificationEventEntity, String>
 
+@Entity
+@Table(
+    name = "notification_rules",
+    uniqueConstraints = [
+        UniqueConstraint(
+            name = "uk_notification_rules_keyword_channel",
+            columnNames = ["keyword", "channel"]
+        )
+    ]
+)
+class NotificationRuleEntity(
+    @Id
+    @Column(length = 36)
+    var id: String = UUID.randomUUID().toString(),
+
+    @Column(nullable = false, length = 128)
+    var keyword: String = "",
+
+    @Column(nullable = false, length = 32)
+    var channel: String = "",
+
+    @Column(nullable = false)
+    var enabled: Boolean = true,
+
+    @Column(name = "created_at", nullable = false)
+    var createdAt: Instant = Instant.now()
+) {
+    @PrePersist
+    fun onCreate() {
+        createdAt = Instant.now()
+    }
+}
+
+interface NotificationRuleRepository : JpaRepository<NotificationRuleEntity, String> {
+    fun existsByKeywordAndChannel(keyword: String, channel: String): Boolean
+    fun findByKeywordAndChannel(keyword: String, channel: String): NotificationRuleEntity?
+    fun findByEnabledTrue(): List<NotificationRuleEntity>
+}
+
 @Service
 class NotificationService(
-    private val notificationEventRepository: NotificationEventRepository
+    private val notificationEventRepository: NotificationEventRepository,
+    private val notificationRuleRepository: NotificationRuleRepository
 ) {
-    fun create(request: NotificationDispatchRequest): NotificationEventResponse {
+    fun create(request: NotificationDispatchRequest): NotificationEventResponse? {
+        if (request.keywords.isNotEmpty()) {
+            val matchingRule = notificationRuleRepository.findByEnabledTrue()
+                .firstOrNull { rule -> request.keywords.any { it == rule.keyword } }
+                ?: return null
+
+            return saveEvent(
+                documentId = request.documentId.trim(),
+                channel = matchingRule.channel,
+                message = analysisCompletedMessage(
+                    keyword = matchingRule.keyword,
+                    riskScore = request.riskScore
+                )
+            )
+        }
+
+        return saveEvent(
+            documentId = request.documentId.trim(),
+            channel = request.channel?.trim()?.lowercase() ?: "",
+            message = request.message?.trim() ?: ""
+        )
+    }
+
+    fun createRule(request: NotificationRuleCreateRequest): NotificationRuleResponse {
+        val keyword = request.keyword.trim()
+        val channel = request.channel.trim().lowercase()
+        val rule = notificationRuleRepository.findByKeywordAndChannel(keyword, channel)
+            ?.also { it.enabled = request.enabled }
+            ?: NotificationRuleEntity(
+                keyword = keyword,
+                channel = channel,
+                enabled = request.enabled
+            )
+        val saved = notificationRuleRepository.save(rule)
+        return toRuleResponse(saved)
+    }
+
+    fun listRules(): List<NotificationRuleResponse> =
+        notificationRuleRepository.findAll()
+            .sortedWith(compareBy<NotificationRuleEntity> { it.keyword }.thenBy { it.channel })
+            .map(::toRuleResponse)
+
+    private fun saveEvent(
+        documentId: String,
+        channel: String,
+        message: String
+    ): NotificationEventResponse {
         val saved = notificationEventRepository.save(
             NotificationEventEntity(
-                documentId = request.documentId.trim(),
-                channel = request.channel.trim().lowercase(),
-                message = request.message.trim(),
+                documentId = documentId,
+                channel = channel,
+                message = message,
                 status = "DISPATCHED"
             )
         )
         return toResponse(saved)
+    }
+
+    private fun analysisCompletedMessage(keyword: String, riskScore: Int?): String {
+        val score = riskScore?.let { "위험 점수 ${it}점" } ?: "위험 점수 미정"
+        return "분석 완료: '$keyword' 키워드 규칙이 매칭되었습니다. $score"
     }
 
     fun get(eventId: String): NotificationEventResponse =
@@ -131,6 +254,15 @@ class NotificationService(
             status = entity.status,
             createdAt = entity.createdAt
         )
+
+    private fun toRuleResponse(entity: NotificationRuleEntity): NotificationRuleResponse =
+        NotificationRuleResponse(
+            ruleId = entity.id,
+            keyword = entity.keyword,
+            channel = entity.channel,
+            enabled = entity.enabled,
+            createdAt = entity.createdAt
+        )
 }
 
 @RestController
@@ -139,12 +271,18 @@ class NotificationController(
     private val notificationService: NotificationService
 ) {
     @PostMapping("/dispatch")
-    @ResponseStatus(HttpStatus.CREATED)
-    fun dispatch(@RequestBody request: NotificationDispatchRequest): NotificationEventResponse {
+    fun dispatch(@RequestBody request: NotificationDispatchRequest): ResponseEntity<NotificationEventResponse> {
         require(request.documentId.isNotBlank()) { "documentId must not be blank" }
-        require(request.channel.isNotBlank()) { "channel must not be blank" }
-        require(request.message.isNotBlank()) { "message must not be blank" }
-        return notificationService.create(request)
+
+        if (request.keywords.isEmpty()) {
+            require(!request.channel.isNullOrBlank()) { "channel must not be blank" }
+            require(!request.message.isNullOrBlank()) { "message must not be blank" }
+        }
+
+        val event = notificationService.create(request)
+            ?: return ResponseEntity.noContent().build()
+
+        return ResponseEntity.status(HttpStatus.CREATED).body(event)
     }
 
     @GetMapping("/events/{id}")
@@ -155,6 +293,17 @@ class NotificationController(
 
     @GetMapping("/events")
     fun listEvents(): List<NotificationEventResponse> = notificationService.list()
+
+    @GetMapping("/rules")
+    fun listRules(): List<NotificationRuleResponse> = notificationService.listRules()
+
+    @PostMapping("/rules")
+    @ResponseStatus(HttpStatus.CREATED)
+    fun createRule(@RequestBody request: NotificationRuleCreateRequest): NotificationRuleResponse {
+        require(request.keyword.isNotBlank()) { "keyword must not be blank" }
+        require(request.channel.isNotBlank()) { "channel must not be blank" }
+        return notificationService.createRule(request)
+    }
 }
 
 @RestControllerAdvice

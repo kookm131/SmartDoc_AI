@@ -1,5 +1,5 @@
 import React from 'react';
-import { 
+import {
   LayoutDashboard, 
   FileUp, 
   Table, 
@@ -11,14 +11,19 @@ import {
   Search,
   Sparkles
 } from 'lucide-react';
+import { AuthUser } from '../types';
 
 interface LayoutProps {
   children: React.ReactNode;
   activeTab: string;
   onTabChange: (tab: string) => void;
+  currentUser: AuthUser;
+  onLogout: () => void;
 }
 
-export default function Layout({ children, activeTab, onTabChange }: LayoutProps) {
+export default function Layout({ children, activeTab, onTabChange, currentUser, onLogout }: LayoutProps) {
+  const initials = currentUser.displayName.slice(0, 2).toUpperCase();
+
   return (
     <div className="flex flex-col min-h-screen bg-background text-on-background font-sans">
       {/* Top Navigation Bar */}
@@ -42,9 +47,10 @@ export default function Layout({ children, activeTab, onTabChange }: LayoutProps
               분석 목록
             </button>
             <button 
-              className="text-on-surface-variant hover:bg-surface-container-low px-3 py-2 rounded-lg transition-colors"
+              onClick={() => onTabChange('rules')}
+              className={`px-3 py-2 rounded-lg transition-colors ${activeTab === 'rules' ? 'text-primary font-bold border-b-2 border-primary' : 'text-on-surface-variant hover:bg-surface-container-low'}`}
             >
-              문서 업로드
+              알림 규칙
             </button>
           </div>
         </div>
@@ -55,13 +61,12 @@ export default function Layout({ children, activeTab, onTabChange }: LayoutProps
           </div>
           <HelpCircle className="text-on-surface-variant p-1.5 cursor-pointer hover:bg-surface-container-low rounded-full transition-colors w-9 h-9" />
           <Settings className="text-on-surface-variant p-1.5 cursor-pointer hover:bg-surface-container-low rounded-full transition-colors w-9 h-9" />
-          <div className="w-8 h-8 rounded-full overflow-hidden border border-outline-variant/30">
-            <img 
-              alt="User profile" 
-              src="https://picsum.photos/seed/user/100/100" 
-              referrerPolicy="no-referrer"
-              className="w-full h-full object-cover"
-            />
+          <div className="hidden sm:block text-right">
+            <p className="text-xs font-bold text-on-surface">{currentUser.displayName}</p>
+            <p className="text-[11px] text-on-surface-variant">{currentUser.email}</p>
+          </div>
+          <div className="w-9 h-9 rounded-full border border-outline-variant/30 bg-primary/10 text-primary flex items-center justify-center text-xs font-black">
+            {initials}
           </div>
         </div>
       </nav>
@@ -79,6 +84,7 @@ export default function Layout({ children, activeTab, onTabChange }: LayoutProps
             <SidebarItem 
               icon={<FileUp className="w-5 h-5" />} 
               label="문서 업로드" 
+              onClick={() => onTabChange('list')}
             />
             <SidebarItem 
               icon={<Table className="w-5 h-5" />} 
@@ -94,12 +100,15 @@ export default function Layout({ children, activeTab, onTabChange }: LayoutProps
           <div className="mt-auto flex flex-col gap-2 pt-4 border-t border-outline-variant/15">
             <SidebarItem 
               icon={<Settings className="w-5 h-5" />} 
-              label="설정" 
+              label="알림 규칙"
+              active={activeTab === 'rules'}
+              onClick={() => onTabChange('rules')}
             />
             <SidebarItem 
               icon={<LogOut className="w-5 h-5 text-error" />} 
               label="로그아웃" 
               className="text-error/80 hover:bg-error-container/20"
+              onClick={onLogout}
             />
           </div>
         </aside>

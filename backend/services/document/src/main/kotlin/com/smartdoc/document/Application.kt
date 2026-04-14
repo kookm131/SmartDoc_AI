@@ -7,6 +7,7 @@ import jakarta.persistence.PrePersist
 import jakarta.persistence.PreUpdate
 import jakarta.persistence.Table
 import jakarta.servlet.http.HttpServletRequest
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
 import org.springframework.context.annotation.Profile
@@ -20,10 +21,14 @@ import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
+import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.multipart.MultipartFile
+import java.nio.file.Files
+import java.nio.file.Path
 import java.time.Instant
 import java.util.UUID
 
@@ -64,6 +69,13 @@ data class DocumentStatusUpdateRequest(
     val status: String
 )
 
+data class DocumentContentResponse(
+    val documentId: String,
+    val fileKey: String,
+    val contentType: String?,
+    val textContent: String?
+)
+
 data class ApiErrorResponse(
     val timestamp: Instant,
     val path: String,
@@ -78,19 +90,37 @@ data class ObjectStoreCommand(
     val contentType: String?
 )
 
+data class ObjectFileStoreCommand(
+    val filename: String,
+    val fileKey: String?,
+    val contentType: String?,
+    val bytes: ByteArray
+)
+
 data class ObjectStoreResult(
     val fileKey: String,
     val objectUrl: String
 )
 
+data class ObjectContentResult(
+    val textContent: String?
+)
+
 interface ObjectStoragePort {
     fun store(command: ObjectStoreCommand): ObjectStoreResult
+    fun storeFile(command: ObjectFileStoreCommand): ObjectStoreResult
+    fun readText(fileKey: String, contentType: String?): ObjectContentResult
     fun resolveObjectUrl(fileKey: String): String
 }
 
 @Service
 @Profile("local")
-class LocalObjectStorageAdapter : ObjectStoragePort {
+class LocalObjectStorageAdapter(
+    @Value("\${smartdoc.local-upload-dir:.smartdoc/uploads}")
+    localUploadDir: String
+) : ObjectStoragePort {
+    private val uploadRoot: Path = Path.of(localUploadDir).toAbsolutePath().normalize()
+
     override fun store(command: ObjectStoreCommand): ObjectStoreResult {
         val normalizedKey = command.fileKey.trim().ifBlank {
             "uploads/${command.filename.trim()}"
@@ -101,7 +131,51 @@ class LocalObjectStorageAdapter : ObjectStoragePort {
         )
     }
 
+    override fun storeFile(command: ObjectFileStoreCommand): ObjectStoreResult {
+        val normalizedKey = command.fileKey?.trim()?.ifBlank { null } ?: "uploads/${command.filename.trim()}"
+        val storagePath = if (uploadRoot.fileName?.toString() == "uploads" && normalizedKey.startsWith("uploads/")) {
+            normalizedKey.removePrefix("uploads/")
+        } else {
+            normalizedKey
+        }
+        val target = uploadRoot.resolve(storagePath).normalize()
+        require(target.startsWith(uploadRoot)) { "fileKey must stay within local upload directory" }
+
+        Files.createDirectories(target.parent)
+        Files.write(target, command.bytes)
+
+        return ObjectStoreResult(
+            fileKey = normalizedKey,
+            objectUrl = "local://$normalizedKey"
+        )
+    }
+
+    override fun readText(fileKey: String, contentType: String?): ObjectContentResult {
+        if (contentType != "text/plain") {
+            return ObjectContentResult(textContent = null)
+        }
+
+        val target = resolveLocalPath(fileKey)
+        if (!Files.exists(target)) {
+            return ObjectContentResult(textContent = null)
+        }
+
+        return ObjectContentResult(textContent = Files.readString(target))
+    }
+
     override fun resolveObjectUrl(fileKey: String): String = "local://${fileKey.trim()}"
+
+    private fun resolveLocalPath(fileKey: String): Path {
+        val normalizedKey = fileKey.trim()
+        val storagePath = if (uploadRoot.fileName?.toString() == "uploads" && normalizedKey.startsWith("uploads/")) {
+            normalizedKey.removePrefix("uploads/")
+        } else {
+            normalizedKey
+        }
+        val target = uploadRoot.resolve(storagePath).normalize()
+        require(target.startsWith(uploadRoot)) { "fileKey must stay within local upload directory" }
+        return target
+    }
 }
 
 @Service
@@ -116,6 +190,17 @@ class AwsObjectStorageAdapter : ObjectStoragePort {
             objectUrl = "s3://smartdoc-placeholder/$normalizedKey"
         )
     }
+
+    override fun storeFile(command: ObjectFileStoreCommand): ObjectStoreResult {
+        val normalizedKey = command.fileKey?.trim()?.ifBlank { null } ?: "uploads/${command.filename.trim()}"
+        return ObjectStoreResult(
+            fileKey = normalizedKey,
+            objectUrl = "s3://smartdoc-placeholder/$normalizedKey"
+        )
+    }
+
+    override fun readText(fileKey: String, contentType: String?): ObjectContentResult =
+        ObjectContentResult(textContent = null)
 
     override fun resolveObjectUrl(fileKey: String): String =
         "s3://smartdoc-placeholder/${fileKey.trim()}"
@@ -189,10 +274,51 @@ class DocumentService(
         return toResponse(saved)
     }
 
+    fun upload(file: MultipartFile, fileKey: String?): DocumentCreateResponse {
+        val filename = Path.of(file.originalFilename ?: "").fileName.toString().trim()
+        val contentType = file.contentType?.trim()?.ifBlank { null } ?: "application/octet-stream"
+
+        require(filename.isNotBlank()) { "filename must not be blank" }
+        require(!file.isEmpty) { "file must not be empty" }
+        require(contentType in ALLOWED_CONTENT_TYPES) { "unsupported contentType: $contentType" }
+
+        val stored = objectStoragePort.storeFile(
+            ObjectFileStoreCommand(
+                filename = filename,
+                fileKey = fileKey,
+                contentType = contentType,
+                bytes = file.bytes
+            )
+        )
+
+        val saved = documentRepository.save(
+            DocumentEntity(
+                fileKey = stored.fileKey,
+                filename = filename,
+                contentType = contentType,
+                status = "RECEIVED"
+            )
+        )
+
+        return toResponse(saved)
+    }
+
     fun getById(documentId: String): DocumentCreateResponse {
         val found = documentRepository.findById(documentId)
             .orElseThrow { ResourceNotFoundException("document not found: $documentId") }
         return toResponse(found)
+    }
+
+    fun getContent(documentId: String): DocumentContentResponse {
+        val found = documentRepository.findById(documentId)
+            .orElseThrow { ResourceNotFoundException("document not found: $documentId") }
+        val content = objectStoragePort.readText(found.fileKey, found.contentType)
+        return DocumentContentResponse(
+            documentId = found.id,
+            fileKey = found.fileKey,
+            contentType = found.contentType,
+            textContent = content.textContent
+        )
     }
 
     fun list(): List<DocumentCreateResponse> = documentRepository.findAll()
@@ -228,6 +354,12 @@ class DocumentService(
             "ANALYSIS_PROCESSING",
             "ANALYSIS_COMPLETED"
         )
+
+        private val ALLOWED_CONTENT_TYPES = setOf(
+            "application/pdf",
+            "text/plain",
+            "application/octet-stream"
+        )
     }
 }
 
@@ -246,10 +378,23 @@ class DocumentController(
         return documentService.create(request)
     }
 
+    @PostMapping("/upload")
+    @ResponseStatus(HttpStatus.CREATED)
+    fun uploadDocument(
+        @RequestParam("file") file: MultipartFile,
+        @RequestParam("fileKey", required = false) fileKey: String?
+    ): DocumentCreateResponse = documentService.upload(file, fileKey)
+
     @GetMapping("/{id}")
     fun getDocument(@PathVariable id: String): DocumentCreateResponse {
         require(id.isNotBlank()) { "id must not be blank" }
         return documentService.getById(id)
+    }
+
+    @GetMapping("/{id}/content")
+    fun getDocumentContent(@PathVariable id: String): DocumentContentResponse {
+        require(id.isNotBlank()) { "id must not be blank" }
+        return documentService.getContent(id)
     }
 
     @GetMapping

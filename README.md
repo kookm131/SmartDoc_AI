@@ -18,6 +18,7 @@ SmartDoc AI는 비정형 문서를 AI로 분석하고 후속 업무를 자동화
 3. `npm run dev`
 
 로컬 API 프록시:
+- `/api/gateway/*` -> `http://localhost:8080/api/v1/*` (프론트 기본 진입점)
 - `/api/document/*` -> `http://localhost:8081/api/v1/*`
 - `/api/analysis/*` -> `http://localhost:8082/api/v1/*`
 - `/api/notification/*` -> `http://localhost:8083/api/v1/*`
@@ -28,6 +29,7 @@ SmartDoc AI는 비정형 문서를 AI로 분석하고 후속 업무를 자동화
 1. `scripts/run-service.sh document`
 2. `scripts/run-service.sh analysis`
 3. `scripts/run-service.sh notification`
+4. `scripts/run-service.sh gateway`
 
 한 번에 켜야 할 때:
 
@@ -39,7 +41,13 @@ scripts/run-backend-local.sh
 
 ```bash
 scripts/smoke-local.sh
+scripts/smoke-gateway.sh
 ```
+
+로컬 개발용 로그인:
+- Gateway가 개발용 Auth v1을 담당합니다.
+- 기본 계정: `test@smartdoc.local` / `password`
+- 사용자 DB는 Gateway H2 in-memory라 재시작 시 초기화되지만, 기본 계정은 자동으로 다시 생성됩니다.
 
 직접 실행할 때:
 
@@ -52,6 +60,11 @@ scripts/smoke-local.sh
 - document `8081`
 - analysis `8082`
 - notification `8083`
+
+로컬 파일 업로드:
+- 기본 저장 위치: `.smartdoc/uploads`
+- 변경 환경변수: `SMARTDOC_LOCAL_UPLOAD_DIR`
+- `.smartdoc/`는 git에 올리지 않습니다.
 
 ### 인프라 템플릿
 Docker Compose로 실제 백엔드 앱 컨테이너 실행:
@@ -86,7 +99,7 @@ scripts/build-images.sh notification
 ## 백엔드 요약
 - 공통 패턴: Spring Boot + Kotlin + Java 17
 - 서비스 책임:
-  - gateway: API 진입점/라우팅
+  - gateway: API 진입점/라우팅/Auth v1
   - document: 문서 업로드/메타데이터
   - analysis: Textract/Comprehend 오케스트레이션
   - notification: 규칙 기반 알림 디스패치
@@ -117,7 +130,8 @@ cd backend/services/notification && ./gradlew test
 ### Docker Compose
 - 목적: 로컬 통합 실행 기준점
 - 현재: H2 기반 실제 앱 이미지 빌드/실행
-- 다음 단계: 시크릿 분리, 운영 DB(MSSQL/RDS) 전환
+- DB 방침: 당분간 H2 in-memory 유지
+- 다음 단계: 시크릿 분리, AWS 연동 후반부에 운영 DB 전환 여부 재검토
 
 ### Kubernetes Base
 - 경로: `infra/k8s/base`

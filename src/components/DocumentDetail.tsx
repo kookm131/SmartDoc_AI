@@ -137,11 +137,42 @@ export default function DocumentDetail({
             <div className="space-y-3">
               <div className="flex items-center gap-2">
                 <BarChart3 className="text-primary w-5 h-5" />
-                <h3 className="font-bold text-sm text-on-surface">상태 표시</h3>
+                <h3 className="font-bold text-sm text-on-surface">분석 결과</h3>
               </div>
-              <div className="bg-surface-container-low p-4 rounded-xl border border-outline-variant/5">
-                <p className="text-xs text-on-surface-variant mb-2">현재 상태</p>
-                <p className="text-sm font-bold text-primary">{analysisJob?.state || '대기'}</p>
+              <div className="bg-surface-container-low p-4 rounded-xl border border-outline-variant/5 space-y-4">
+                <div>
+                  <p className="text-xs text-on-surface-variant mb-2">현재 상태</p>
+                  <p className="text-sm font-bold text-primary">{analysisJob?.state || '대기'}</p>
+                </div>
+                <div>
+                  <p className="text-xs text-on-surface-variant mb-2">요약</p>
+                  <p className="text-sm text-on-surface-variant leading-relaxed">
+                    {analysisJob?.resultSummary || '분석 완료 후 요약이 표시됩니다.'}
+                  </p>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="bg-surface-container-lowest p-3 rounded-lg">
+                    <span className="text-[11px] text-on-surface-variant">리스크 점수</span>
+                    <p className="mt-1 text-xl font-black text-primary">
+                      {analysisJob?.riskScore ?? '-'}
+                      {analysisJob?.riskScore != null && <span className="text-xs font-bold text-on-surface-variant"> / 100</span>}
+                    </p>
+                  </div>
+                  <div className="bg-surface-container-lowest p-3 rounded-lg">
+                    <span className="text-[11px] text-on-surface-variant">키워드</span>
+                    <div className="mt-2 flex flex-wrap gap-1">
+                      {analysisJob?.keywords?.length ? (
+                        analysisJob.keywords.map((keyword) => (
+                          <span key={keyword} className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">
+                            {keyword}
+                          </span>
+                        ))
+                      ) : (
+                        <span className="text-sm text-on-surface-variant">-</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
             </div>
 

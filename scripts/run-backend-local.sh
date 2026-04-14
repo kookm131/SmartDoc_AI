@@ -5,7 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 if [[ "$#" -gt 0 ]]; then
   SERVICES=("$@")
 else
-  SERVICES=(document analysis notification)
+  SERVICES=(document analysis notification gateway)
 fi
 PIDS=()
 

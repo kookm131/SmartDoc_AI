@@ -14,20 +14,14 @@ cleanup() {
 
 trap cleanup EXIT INT TERM
 
+kubectl -n smartdoc wait --for=condition=available deployment/smartdoc-gateway --timeout=180s
 kubectl -n smartdoc wait --for=condition=available deployment/smartdoc-document --timeout=180s
 kubectl -n smartdoc wait --for=condition=available deployment/smartdoc-analysis --timeout=180s
 kubectl -n smartdoc wait --for=condition=available deployment/smartdoc-notification --timeout=180s
 
-kubectl -n smartdoc port-forward service/smartdoc-document 18081:8081 >/tmp/smartdoc-document-port-forward.log 2>&1 &
-PIDS+=("$!")
-kubectl -n smartdoc port-forward service/smartdoc-analysis 18082:8082 >/tmp/smartdoc-analysis-port-forward.log 2>&1 &
-PIDS+=("$!")
-kubectl -n smartdoc port-forward service/smartdoc-notification 18083:8083 >/tmp/smartdoc-notification-port-forward.log 2>&1 &
+kubectl -n smartdoc port-forward service/smartdoc-gateway 18080:8080 >/tmp/smartdoc-gateway-port-forward.log 2>&1 &
 PIDS+=("$!")
 
 sleep 5
 
-DOCUMENT_BASE_URL=http://localhost:18081 \
-ANALYSIS_BASE_URL=http://localhost:18082 \
-NOTIFICATION_BASE_URL=http://localhost:18083 \
-  "$ROOT_DIR/scripts/smoke-local.sh"
+GATEWAY_BASE_URL=http://localhost:18080 "$ROOT_DIR/scripts/smoke-gateway.sh"

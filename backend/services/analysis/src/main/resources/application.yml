@@ -24,6 +24,10 @@ smartdoc:
     base-url: ${SMARTDOC_DOCUMENT_BASE_URL:http://localhost:8081}
     connect-timeout-ms: ${SMARTDOC_DOCUMENT_CONNECT_TIMEOUT_MS:1000}
     read-timeout-ms: ${SMARTDOC_DOCUMENT_READ_TIMEOUT_MS:2000}
+  notification:
+    base-url: ${SMARTDOC_NOTIFICATION_BASE_URL:http://localhost:8083}
+    connect-timeout-ms: ${SMARTDOC_NOTIFICATION_CONNECT_TIMEOUT_MS:1000}
+    read-timeout-ms: ${SMARTDOC_NOTIFICATION_READ_TIMEOUT_MS:2000}
 
 logging:
   level:

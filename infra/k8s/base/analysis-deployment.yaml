@@ -47,6 +47,21 @@ spec:
                 configMapKeyRef:
                   name: smartdoc-app-config
                   key: SMARTDOC_DOCUMENT_READ_TIMEOUT_MS
+            - name: SMARTDOC_NOTIFICATION_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: smartdoc-app-config
+                  key: SMARTDOC_NOTIFICATION_BASE_URL
+            - name: SMARTDOC_NOTIFICATION_CONNECT_TIMEOUT_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: smartdoc-app-config
+                  key: SMARTDOC_NOTIFICATION_CONNECT_TIMEOUT_MS
+            - name: SMARTDOC_NOTIFICATION_READ_TIMEOUT_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: smartdoc-app-config
+                  key: SMARTDOC_NOTIFICATION_READ_TIMEOUT_MS
           livenessProbe:
             httpGet:
               path: /actuator/health

@@ -13,3 +13,4 @@ coverage/
 minikube-linux-amd64
 .gradle-local/
 backend/services/*/.gradle/
+.smartdoc/

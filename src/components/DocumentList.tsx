@@ -32,21 +32,24 @@ export default function DocumentList({
   const [filename, setFilename] = useState('');
   const [fileKey, setFileKey] = useState('');
   const [contentType, setContentType] = useState('application/pdf');
+  const [selectedFile, setSelectedFile] = useState<File | null>(null);
 
   const handleSubmit = async (event: React.FormEvent) => {
     event.preventDefault();
-    const trimmedFilename = filename.trim();
+    const trimmedFilename = filename.trim() || selectedFile?.name || '';
     const finalFileKey = fileKey.trim() || `uploads/${trimmedFilename}`;
 
     await onCreateDocument({
       filename: trimmedFilename,
-      fileKey: finalFileKey,
-      contentType: contentType.trim(),
+      fileKey: selectedFile ? fileKey.trim() : finalFileKey,
+      contentType: selectedFile ? selectedFile.type || contentType.trim() : contentType.trim(),
+      file: selectedFile ?? undefined,
     });
 
     setFilename('');
     setFileKey('');
     setContentType('application/pdf');
+    setSelectedFile(null);
     setShowCreateForm(false);
   };
 
@@ -76,9 +79,22 @@ export default function DocumentList({
 
       {showCreateForm && (
         <section className="bg-surface-container-lowest rounded-xl p-5 shadow-sm border border-outline-variant/10">
-          <form className="grid grid-cols-1 md:grid-cols-4 gap-3" onSubmit={handleSubmit}>
+          <form className="grid grid-cols-1 md:grid-cols-5 gap-3" onSubmit={handleSubmit}>
             <input
-              required
+              type="file"
+              accept=".pdf,.txt,application/pdf,text/plain,application/octet-stream"
+              onChange={(event) => {
+                const file = event.target.files?.[0] ?? null;
+                setSelectedFile(file);
+                if (file) {
+                  setFilename((prev) => prev || file.name);
+                  setContentType(file.type || 'application/octet-stream');
+                }
+              }}
+              className="px-3 py-2.5 bg-surface-container-highest/50 rounded-xl outline-none focus:ring-2 focus:ring-primary/40 text-sm"
+            />
+            <input
+              required={!selectedFile}
               value={filename}
               onChange={(event) => setFilename(event.target.value)}
               placeholder="파일명 (예: invoice-2026-04.pdf)"

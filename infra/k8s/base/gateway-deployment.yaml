@@ -31,6 +31,32 @@ spec:
                 name: smartdoc-app-config
             - secretRef:
                 name: smartdoc-app-secret
+          env:
+            - name: SMARTDOC_DOCUMENT_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: smartdoc-app-config
+                  key: SMARTDOC_DOCUMENT_BASE_URL
+            - name: SMARTDOC_ANALYSIS_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: smartdoc-app-config
+                  key: SMARTDOC_ANALYSIS_BASE_URL
+            - name: SMARTDOC_NOTIFICATION_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: smartdoc-app-config
+                  key: SMARTDOC_NOTIFICATION_BASE_URL
+            - name: SMARTDOC_UPSTREAM_CONNECT_TIMEOUT_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: smartdoc-app-config
+                  key: SMARTDOC_UPSTREAM_CONNECT_TIMEOUT_MS
+            - name: SMARTDOC_UPSTREAM_READ_TIMEOUT_MS
+              valueFrom:
+                configMapKeyRef:
+                  name: smartdoc-app-config
+                  key: SMARTDOC_UPSTREAM_READ_TIMEOUT_MS
           livenessProbe:
             httpGet:
               path: /actuator/health

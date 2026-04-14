@@ -1,27 +1,39 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DOCUMENT_BASE_URL="${DOCUMENT_BASE_URL:-http://localhost:8081}"
-ANALYSIS_BASE_URL="${ANALYSIS_BASE_URL:-http://localhost:8082}"
-NOTIFICATION_BASE_URL="${NOTIFICATION_BASE_URL:-http://localhost:8083}"
+GATEWAY_BASE_URL="${GATEWAY_BASE_URL:-http://localhost:8080}"
 
 extract_json_string() {
   local key="$1"
   sed -n "s/.*\"$key\":\"\\([^\"]*\\)\".*/\\1/p"
 }
 
-echo "Checking health endpoints..."
-curl -fsS "$DOCUMENT_BASE_URL/api/v1/health" >/dev/null
-curl -fsS "$ANALYSIS_BASE_URL/api/v1/health" >/dev/null
-curl -fsS "$NOTIFICATION_BASE_URL/api/v1/health" >/dev/null
-echo "Health checks passed."
+echo "Checking gateway health..."
+curl -fsS "$GATEWAY_BASE_URL/api/v1/health" >/dev/null
+echo "Gateway health check passed."
 
-upload_file="$(mktemp /tmp/smartdoc-local-smoke-XXXXXX.txt)"
-printf '긴급 계약 검토 알림이 필요한 SmartDoc local smoke test document\n' > "$upload_file"
+echo "Logging in through gateway..."
+auth_response="$(
+  curl -fsS -X POST "$GATEWAY_BASE_URL/api/v1/auth/login" \
+    -H "Content-Type: application/json" \
+    -d '{"email":"test@smartdoc.local","password":"password"}'
+)"
+access_token="$(printf '%s' "$auth_response" | extract_json_string "accessToken")"
 
-echo "Uploading document..."
+if [[ -z "$access_token" ]]; then
+  echo "Could not parse accessToken from response: $auth_response"
+  exit 1
+fi
+
+auth_header="Authorization: Bearer $access_token"
+
+upload_file="$(mktemp /tmp/smartdoc-gateway-smoke-XXXXXX.txt)"
+printf '긴급 계약 검토 알림이 필요한 SmartDoc gateway smoke test document\n' > "$upload_file"
+
+echo "Uploading document through gateway..."
 document_response="$(
-  curl -fsS -X POST "$DOCUMENT_BASE_URL/api/v1/documents/upload" \
+  curl -fsS -X POST "$GATEWAY_BASE_URL/api/v1/documents/upload" \
+    -H "$auth_header" \
     -F "file=@$upload_file;type=text/plain"
 )"
 rm -f "$upload_file"
@@ -34,9 +46,10 @@ fi
 
 echo "Document uploaded: $document_id"
 
-echo "Creating analysis job..."
+echo "Creating analysis job through gateway..."
 analysis_response="$(
-  curl -fsS -X POST "$ANALYSIS_BASE_URL/api/v1/analysis/jobs" \
+  curl -fsS -X POST "$GATEWAY_BASE_URL/api/v1/analysis/jobs" \
+    -H "$auth_header" \
     -H "Content-Type: application/json" \
     -d "{\"documentId\":\"$document_id\"}"
 )"
@@ -47,11 +60,8 @@ if [[ -z "$job_id" ]]; then
   exit 1
 fi
 
-echo "Analysis job created: $job_id"
-
-echo "Waiting for analysis state transition..."
 sleep 5
-analysis_status_response="$(curl -fsS "$ANALYSIS_BASE_URL/api/v1/analysis/jobs/$job_id")"
+analysis_status_response="$(curl -fsS -H "$auth_header" "$GATEWAY_BASE_URL/api/v1/analysis/jobs/$job_id")"
 analysis_state="$(printf '%s' "$analysis_status_response" | extract_json_string "state")"
 
 if [[ "$analysis_state" != "COMPLETED" ]]; then
@@ -59,7 +69,7 @@ if [[ "$analysis_state" != "COMPLETED" ]]; then
   exit 1
 fi
 
-document_status_response="$(curl -fsS "$DOCUMENT_BASE_URL/api/v1/documents/$document_id")"
+document_status_response="$(curl -fsS -H "$auth_header" "$GATEWAY_BASE_URL/api/v1/documents/$document_id")"
 document_status="$(printf '%s' "$document_status_response" | extract_json_string "status")"
 
 if [[ "$document_status" != "ANALYSIS_COMPLETED" ]]; then
@@ -67,10 +77,10 @@ if [[ "$document_status" != "ANALYSIS_COMPLETED" ]]; then
   exit 1
 fi
 
-echo "Analysis completed and document status synced."
+echo "Analysis completed and document status synced through gateway."
 
-echo "Checking automatic notification..."
-notification_events_response="$(curl -fsS "$NOTIFICATION_BASE_URL/api/v1/notifications/events")"
+echo "Checking automatic notification through gateway..."
+notification_events_response="$(curl -fsS -H "$auth_header" "$GATEWAY_BASE_URL/api/v1/notifications/events")"
 
 if ! printf '%s' "$notification_events_response" | grep -q "\"documentId\":\"$document_id\""; then
   echo "Expected automatic notification event for document $document_id, got: $notification_events_response"
@@ -82,6 +92,4 @@ if ! printf '%s' "$notification_events_response" | grep -q "분석 완료"; then
   exit 1
 fi
 
-echo "Automatic notification event found."
-
-echo "Smoke test passed."
+echo "Gateway smoke test passed."
