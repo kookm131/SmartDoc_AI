@@ -14,6 +14,15 @@ fun main(args: Array<String>) {
 }
 
 @RestController
+class RootController {
+    @GetMapping("/")
+    fun root(): Map<String, String> = mapOf(
+        "service" to "gateway",
+        "message" to "gateway up"
+    )
+}
+
+@RestController
 @RequestMapping("/api/v1")
 class HealthController {
     @GetMapping("/health")

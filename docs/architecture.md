@@ -19,3 +19,10 @@
 3. AI 분석(Textract/Comprehend)
 4. 결과 저장(RDBMS)
 5. 규칙 기반 알림 발송
+
+## 현재 단계와 연동 계획
+- 현재: 로컬 개발 단계(H2/JPA, Kubernetes base 매니페스트)
+- 다음: AWS/EKS 연동
+  - RDBMS를 MSSQL(RDS 등)로 전환
+  - S3/Textract/Comprehend 연동 어댑터 추가
+  - EKS 배포(Deployment/Service + Ingress/Secret/ConfigMap)로 운영 경로 전환

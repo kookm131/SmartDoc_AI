@@ -6,8 +6,8 @@
 - AlertRule
 - AlertEvent
 
-## 물리 스키마 초안 (MSSQL)
-- `documents(id, file_key, filename, status, created_at, updated_at)`
+## 물리 스키마 초안 (로컬 H2 시작, 운영 MSSQL 전환)
+- `documents(id, file_key, filename, status, content_type, created_at, updated_at)`
 - `analysis_jobs(id, document_id, state, sentiment, extracted_text_ref, created_at)`
 - `keyword_detections(id, analysis_job_id, keyword, confidence, created_at)`
 - `notification_rules(id, keyword, channel, enabled, created_at)`
