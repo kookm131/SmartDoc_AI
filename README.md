@@ -17,6 +17,10 @@ SmartDoc AI는 비정형 문서를 AI로 분석하고 후속 업무를 자동화
 2. `.env.example` 참고 후 `.env.local` 작성
 3. `npm run dev`
 
+로컬 API 프록시:
+- `/api/document/*` -> `http://localhost:8081/api/v1/*`
+- `/api/analysis/*` -> `http://localhost:8082/api/v1/*`
+
 ### 백엔드 (서비스별)
 1. `cd backend/services/gateway` (또는 `document`, `analysis`, `notification`)
 2. `cp .env.example .env`

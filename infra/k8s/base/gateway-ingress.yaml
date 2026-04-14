@@ -1,0 +1,19 @@
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: smartdoc-gateway
+  namespace: smartdoc
+  annotations:
+    kubernetes.io/ingress.class: nginx
+spec:
+  rules:
+    - host: smartdoc.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: smartdoc-gateway
+                port:
+                  number: 8080

@@ -18,6 +18,26 @@ spec:
           image: smartdoc/analysis:latest
           ports:
             - containerPort: 8082
+          envFrom:
+            - configMapRef:
+                name: smartdoc-app-config
+            - secretRef:
+                name: smartdoc-app-secret
           env:
-            - name: SPRING_PROFILES_ACTIVE
-              value: local
+            - name: SMARTDOC_DOCUMENT_BASE_URL
+              valueFrom:
+                configMapKeyRef:
+                  name: smartdoc-app-config
+                  key: SMARTDOC_DOCUMENT_BASE_URL
+          livenessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8082
+            initialDelaySeconds: 20
+            periodSeconds: 10
+          readinessProbe:
+            httpGet:
+              path: /actuator/health
+              port: 8082
+            initialDelaySeconds: 10
+            periodSeconds: 5

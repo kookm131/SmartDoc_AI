@@ -1,10 +1,13 @@
 package com.smartdoc.analysis
 
 import jakarta.servlet.http.HttpServletRequest
+import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
+import org.springframework.context.annotation.Profile
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
+import org.springframework.stereotype.Service
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PathVariable
@@ -14,6 +17,8 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.client.HttpClientErrorException
+import org.springframework.web.client.RestClient
 import java.time.Instant
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
@@ -43,8 +48,71 @@ data class AnalysisJobResponse(
     val jobId: String,
     val documentId: String,
     val state: String,
-    val createdAt: Instant
+    val createdAt: Instant,
+    val analysisProvider: String
 )
+
+data class AiAnalysisCommand(
+    val documentId: String
+)
+
+data class AiAnalysisResult(
+    val state: String,
+    val provider: String
+)
+
+interface AiAnalysisPort {
+    fun submit(command: AiAnalysisCommand): AiAnalysisResult
+}
+
+interface DocumentLookupPort {
+    fun exists(documentId: String): Boolean
+}
+
+@Service
+@Profile("local")
+class LocalAiAnalysisAdapter : AiAnalysisPort {
+    override fun submit(command: AiAnalysisCommand): AiAnalysisResult =
+        AiAnalysisResult(
+            state = "QUEUED",
+            provider = "local-stub"
+        )
+}
+
+@Service
+@Profile("aws")
+class AwsAiAnalysisAdapter : AiAnalysisPort {
+    override fun submit(command: AiAnalysisCommand): AiAnalysisResult =
+        AiAnalysisResult(
+            state = "QUEUED",
+            provider = "aws-textract-comprehend"
+        )
+}
+
+@Service
+@Profile("local")
+class LocalDocumentLookupAdapter(
+    @Value("\${smartdoc.document.base-url:http://localhost:8081}")
+    private val documentBaseUrl: String
+) : DocumentLookupPort {
+    private val client = RestClient.builder().baseUrl(documentBaseUrl).build()
+
+    override fun exists(documentId: String): Boolean = try {
+        client.get()
+            .uri("/api/v1/documents/{id}", documentId)
+            .retrieve()
+            .toBodilessEntity()
+        true
+    } catch (ex: HttpClientErrorException.NotFound) {
+        false
+    }
+}
+
+@Service
+@Profile("aws")
+class AwsDocumentLookupAdapter : DocumentLookupPort {
+    override fun exists(documentId: String): Boolean = true
+}
 
 data class ApiErrorResponse(
     val timestamp: Instant,
@@ -56,15 +124,27 @@ data class ApiErrorResponse(
 
 class ResourceNotFoundException(message: String) : RuntimeException(message)
 
-class AnalysisJobMemoryStore {
+@Service
+class AnalysisJobMemoryStore(
+    private val aiAnalysisPort: AiAnalysisPort,
+    private val documentLookupPort: DocumentLookupPort
+) {
     private val storage = ConcurrentHashMap<String, AnalysisJobResponse>()
 
     fun create(request: AnalysisJobCreateRequest): AnalysisJobResponse {
+        val docId = request.documentId.trim()
+        if (!documentLookupPort.exists(docId)) {
+            throw ResourceNotFoundException("document not found: $docId")
+        }
+
+        val result = aiAnalysisPort.submit(AiAnalysisCommand(documentId = docId))
+
         val created = AnalysisJobResponse(
             jobId = UUID.randomUUID().toString(),
-            documentId = request.documentId.trim(),
-            state = "QUEUED",
-            createdAt = Instant.now()
+            documentId = docId,
+            state = result.state,
+            createdAt = Instant.now(),
+            analysisProvider = result.provider
         )
         storage[created.jobId] = created
         return created
@@ -76,9 +156,9 @@ class AnalysisJobMemoryStore {
 
 @RestController
 @RequestMapping("/api/v1/analysis/jobs")
-class AnalysisController {
-    private val store = AnalysisJobMemoryStore()
-
+class AnalysisController(
+    private val store: AnalysisJobMemoryStore
+) {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     fun createJob(@RequestBody request: AnalysisJobCreateRequest): AnalysisJobResponse {

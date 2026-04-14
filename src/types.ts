@@ -1,18 +1,27 @@
-export type DocumentStatus = '완료' | '검토 중' | '리스크' | '분석 중';
+export interface ApiErrorResponse {
+  timestamp: string;
+  path: string;
+  code: string;
+  message: string;
+  traceId: string;
+}
 
-export interface Document {
-  id: string;
-  type: string;
-  company: string;
-  amount: string;
-  keywords: string[];
-  sentiment: {
-    label: string;
-    score: number;
-    type: 'positive' | 'neutral' | 'negative';
-  };
-  status: DocumentStatus;
-  date: string;
+export interface DocumentRecord {
+  documentId: string;
+  filename: string;
+  fileKey: string;
+  contentType?: string | null;
+  status: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AnalysisJobRecord {
+  jobId: string;
+  documentId: string;
+  state: string;
+  createdAt: string;
+  analysisProvider: string;
 }
 
 export interface DashboardStats {
@@ -20,4 +29,10 @@ export interface DashboardStats {
   weeklyChange: number;
   avgConfidence: number;
   reviewNeeded: number;
+}
+
+export interface DocumentCreateInput {
+  filename: string;
+  fileKey: string;
+  contentType?: string;
 }

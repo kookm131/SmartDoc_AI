@@ -6,11 +6,13 @@ import jakarta.persistence.Id
 import jakarta.persistence.PrePersist
 import jakarta.persistence.PreUpdate
 import jakarta.persistence.Table
+import jakarta.servlet.http.HttpServletRequest
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
+import org.springframework.context.annotation.Profile
 import org.springframework.data.jpa.repository.JpaRepository
-import org.springframework.http.ResponseEntity
 import org.springframework.http.HttpStatus
+import org.springframework.http.ResponseEntity
 import org.springframework.stereotype.Service
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.GetMapping
@@ -21,7 +23,6 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.bind.annotation.RestControllerAdvice
-import jakarta.servlet.http.HttpServletRequest
 import java.time.Instant
 import java.util.UUID
 
@@ -65,6 +66,55 @@ data class ApiErrorResponse(
     val message: String,
     val traceId: String
 )
+
+data class ObjectStoreCommand(
+    val filename: String,
+    val fileKey: String,
+    val contentType: String?
+)
+
+data class ObjectStoreResult(
+    val fileKey: String,
+    val objectUrl: String
+)
+
+interface ObjectStoragePort {
+    fun store(command: ObjectStoreCommand): ObjectStoreResult
+    fun resolveObjectUrl(fileKey: String): String
+}
+
+@Service
+@Profile("local")
+class LocalObjectStorageAdapter : ObjectStoragePort {
+    override fun store(command: ObjectStoreCommand): ObjectStoreResult {
+        val normalizedKey = command.fileKey.trim().ifBlank {
+            "uploads/${command.filename.trim()}"
+        }
+        return ObjectStoreResult(
+            fileKey = normalizedKey,
+            objectUrl = "local://$normalizedKey"
+        )
+    }
+
+    override fun resolveObjectUrl(fileKey: String): String = "local://${fileKey.trim()}"
+}
+
+@Service
+@Profile("aws")
+class AwsObjectStorageAdapter : ObjectStoragePort {
+    override fun store(command: ObjectStoreCommand): ObjectStoreResult {
+        val normalizedKey = command.fileKey.trim().ifBlank {
+            "uploads/${command.filename.trim()}"
+        }
+        return ObjectStoreResult(
+            fileKey = normalizedKey,
+            objectUrl = "s3://smartdoc-placeholder/$normalizedKey"
+        )
+    }
+
+    override fun resolveObjectUrl(fileKey: String): String =
+        "s3://smartdoc-placeholder/${fileKey.trim()}"
+}
 
 class ResourceNotFoundException(message: String) : RuntimeException(message)
 
@@ -110,56 +160,50 @@ interface DocumentRepository : JpaRepository<DocumentEntity, String>
 
 @Service
 class DocumentService(
-    private val documentRepository: DocumentRepository
+    private val documentRepository: DocumentRepository,
+    private val objectStoragePort: ObjectStoragePort
 ) {
     fun create(request: DocumentCreateRequest): DocumentCreateResponse {
+        val stored = objectStoragePort.store(
+            ObjectStoreCommand(
+                filename = request.filename.trim(),
+                fileKey = request.fileKey.trim(),
+                contentType = request.contentType?.trim()
+            )
+        )
+
         val saved = documentRepository.save(
             DocumentEntity(
-                fileKey = request.fileKey.trim(),
+                fileKey = stored.fileKey,
                 filename = request.filename.trim(),
                 contentType = request.contentType?.trim(),
                 status = "RECEIVED"
             )
         )
 
-        return DocumentCreateResponse(
-            documentId = saved.id,
-            filename = saved.filename,
-            fileKey = saved.fileKey,
-            contentType = saved.contentType,
-            status = saved.status,
-            createdAt = saved.createdAt,
-            updatedAt = saved.updatedAt
-        )
+        return toResponse(saved)
     }
 
     fun getById(documentId: String): DocumentCreateResponse {
         val found = documentRepository.findById(documentId)
             .orElseThrow { ResourceNotFoundException("document not found: $documentId") }
-        return DocumentCreateResponse(
-            documentId = found.id,
-            filename = found.filename,
-            fileKey = found.fileKey,
-            contentType = found.contentType,
-            status = found.status,
-            createdAt = found.createdAt,
-            updatedAt = found.updatedAt
-        )
+        return toResponse(found)
     }
 
     fun list(): List<DocumentCreateResponse> = documentRepository.findAll()
         .sortedByDescending { it.createdAt }
-        .map {
-            DocumentCreateResponse(
-                documentId = it.id,
-                filename = it.filename,
-                fileKey = it.fileKey,
-                contentType = it.contentType,
-                status = it.status,
-                createdAt = it.createdAt,
-                updatedAt = it.updatedAt
-            )
-        }
+        .map(::toResponse)
+
+    private fun toResponse(entity: DocumentEntity): DocumentCreateResponse =
+        DocumentCreateResponse(
+            documentId = entity.id,
+            filename = entity.filename,
+            fileKey = entity.fileKey,
+            contentType = entity.contentType,
+            status = entity.status,
+            createdAt = entity.createdAt,
+            updatedAt = entity.updatedAt
+        )
 }
 
 @RestController

@@ -119,9 +119,13 @@ curl -X POST http://localhost:8081/api/v1/documents \
   "jobId": "uuid",
   "documentId": "uuid",
   "state": "QUEUED",
-  "createdAt": "2026-04-14T08:00:00Z"
+  "createdAt": "2026-04-14T08:00:00Z",
+  "analysisProvider": "local-stub"
 }
 ```
+
+주의:
+- `documentId`가 실제로 존재하지 않으면 `404 RESOURCE_NOT_FOUND`를 반환합니다.
 
 ### `GET /api/v1/analysis/jobs/{id}` 응답 예시 (`200 OK`)
 ```json
@@ -129,13 +133,51 @@ curl -X POST http://localhost:8081/api/v1/documents \
   "jobId": "uuid",
   "documentId": "uuid",
   "state": "QUEUED",
-  "createdAt": "2026-04-14T08:00:00Z"
+  "createdAt": "2026-04-14T08:00:00Z",
+  "analysisProvider": "local-stub"
 }
 ```
 
 ## Notification
 - `POST /api/v1/notifications/dispatch`
 - `GET /api/v1/notifications/events`
+- `GET /api/v1/notifications/events/{id}`
+
+### `POST /api/v1/notifications/dispatch` 요청/응답 예시
+요청:
+```json
+{
+  "documentId": "uuid",
+  "channel": "slack",
+  "message": "긴급 검토가 필요한 문서입니다."
+}
+```
+
+응답 (`201 Created`):
+```json
+{
+  "eventId": "uuid",
+  "documentId": "uuid",
+  "channel": "slack",
+  "message": "긴급 검토가 필요한 문서입니다.",
+  "status": "DISPATCHED",
+  "createdAt": "2026-04-14T09:00:00Z"
+}
+```
+
+### `GET /api/v1/notifications/events` 응답 예시 (`200 OK`)
+```json
+[
+  {
+    "eventId": "uuid",
+    "documentId": "uuid",
+    "channel": "slack",
+    "message": "긴급 검토가 필요한 문서입니다.",
+    "status": "DISPATCHED",
+    "createdAt": "2026-04-14T09:00:00Z"
+  }
+]
+```
 
 ## 오류 모델
 - 공통 필드: `timestamp`, `path`, `code`, `message`, `traceId`
