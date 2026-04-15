@@ -133,6 +133,7 @@ class GatewayProxy(
         val requestSpec = client.method(method)
             .uri(path)
             .accept(MediaType.APPLICATION_JSON)
+            .withUserHeaders(request)
 
         if (body != null) {
             requestSpec.contentType(MediaType.APPLICATION_JSON).body(body)
@@ -170,6 +171,7 @@ class GatewayProxy(
                 .uri(path)
                 .contentType(MediaType.MULTIPART_FORM_DATA)
                 .accept(MediaType.APPLICATION_JSON)
+                .withUserHeaders(request)
                 .body(body)
                 .exchange { _, response ->
                     val responseBody = StreamUtils.copyToString(response.body, StandardCharsets.UTF_8)
@@ -188,6 +190,15 @@ class GatewayProxy(
             UpstreamTarget.ANALYSIS -> analysisClient
             UpstreamTarget.NOTIFICATION -> notificationClient
         }
+
+    private fun RestClient.RequestBodySpec.withUserHeaders(request: HttpServletRequest): RestClient.RequestBodySpec {
+        val principal = request.getAttribute(AUTH_USER_ATTRIBUTE) as? AuthenticatedPrincipal
+        if (principal != null) {
+            header(SMARTDOC_USER_ID_HEADER, principal.userId)
+            header(SMARTDOC_USER_EMAIL_HEADER, principal.email)
+        }
+        return this
+    }
 
     private fun upstreamError(
         target: UpstreamTarget,

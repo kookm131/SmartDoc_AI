@@ -39,7 +39,9 @@ import javax.crypto.SecretKeyFactory
 import javax.crypto.spec.PBEKeySpec
 import javax.crypto.spec.SecretKeySpec
 
-private const val AUTH_USER_ATTRIBUTE = "smartdoc.auth.user"
+const val AUTH_USER_ATTRIBUTE = "smartdoc.auth.user"
+const val SMARTDOC_USER_ID_HEADER = "X-SmartDoc-User-Id"
+const val SMARTDOC_USER_EMAIL_HEADER = "X-SmartDoc-User-Email"
 
 @Entity
 @Table(name = "app_users")

@@ -1,6 +1,72 @@
 # SmartDoc AI
 
-SmartDoc AI는 비정형 문서를 AI로 분석하고 후속 업무를 자동화하는 MSA 기반 플랫폼입니다.
+SmartDoc AI는 비정형 문서를 AI로 분석하고 후속 업무를 자동화하며, SaaS 형태의 서비스 제공과 PaaS 형태의 확장 가능한 운영 환경을 지향하는 플랫폼입니다.
+
+## 전체 흐름
+```mermaid
+flowchart LR
+    user([사용자]):::actor
+    web[프론트엔드<br/>Vite App]:::client
+    gateway[Gateway<br/>API 진입점 / Auth]:::service
+    document[Document<br/>업로드 / 메타데이터]:::service
+    analysis[Analysis<br/>AI 분석 오케스트레이션]:::ai
+    notification[Notification<br/>규칙 기반 알림]:::service
+    storage[(파일 저장소<br/>S3 / Local)]:::data
+    database[(메타데이터 DB<br/>H2 / RDBMS)]:::data
+    aws[[Textract / Comprehend]]:::external
+
+    user --> web
+    web --> gateway
+    gateway --> document
+    gateway --> analysis
+    gateway --> notification
+    document --> storage
+    document --> database
+    analysis --> document
+    analysis --> aws
+    analysis --> database
+    analysis --> notification
+    notification --> database
+    notification --> user
+
+    classDef actor fill:#f8fafc,stroke:#334155,stroke-width:2px,color:#0f172a;
+    classDef client fill:#ecfeff,stroke:#0891b2,stroke-width:2px,color:#164e63;
+    classDef service fill:#eef2ff,stroke:#4f46e5,stroke-width:2px,color:#312e81;
+    classDef ai fill:#f0fdf4,stroke:#16a34a,stroke-width:2px,color:#14532d;
+    classDef data fill:#fff7ed,stroke:#ea580c,stroke-width:2px,color:#7c2d12;
+    classDef external fill:#fdf2f8,stroke:#db2777,stroke-width:2px,color:#831843;
+```
+
+## 문서 분석 시퀀스
+```mermaid
+sequenceDiagram
+    autonumber
+    actor User as 사용자
+    participant FE as 프론트엔드
+    participant GW as Gateway
+    participant DOC as Document
+    participant AN as Analysis
+    participant AI as Textract/Comprehend
+    participant NOTI as Notification
+
+    User->>FE: 문서 업로드 및 분석 요청
+    FE->>GW: Authorization Bearer 토큰과 함께 요청
+    GW->>DOC: 사용자 헤더를 포함해 문서 저장 요청
+    DOC-->>GW: documentId, 저장 상태 반환
+    GW-->>FE: 업로드 완료 응답
+
+    FE->>GW: documentId 분석 시작 요청
+    GW->>AN: 분석 Job 생성 요청
+    AN->>DOC: 문서 원본/텍스트 조회
+    AN->>AI: 텍스트 추출 및 키워드 분석
+    AI-->>AN: 분석 결과 반환
+    AN->>DOC: 문서 분석 상태 동기화
+    AN->>NOTI: 키워드, 위험 점수 전달
+    NOTI-->>AN: 알림 이벤트 저장 결과
+    AN-->>GW: 분석 Job 상태 반환
+    GW-->>FE: 분석 진행 상태 반환
+    FE-->>User: 결과와 알림 표시
+```
 
 ## 가장 먼저 할 일
 로컬 기준선부터 맞춥니다.

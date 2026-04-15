@@ -51,8 +51,8 @@ class AnalysisApiTest {
     @Test
     fun `creates analysis job and advances local state while syncing document status`() {
         val documentId = "11111111-1111-1111-1111-111111111111"
-        `when`(documentLookupPort.exists(documentId)).thenReturn(true)
-        `when`(documentLookupPort.get(documentId)).thenReturn(
+        `when`(documentLookupPort.exists(documentId, "local-dev-user")).thenReturn(true)
+        `when`(documentLookupPort.get(documentId, "local-dev-user")).thenReturn(
             DocumentInfo(
                 documentId = documentId,
                 filename = "contract-review.txt",
@@ -60,13 +60,14 @@ class AnalysisApiTest {
                 contentType = "text/plain"
             )
         )
-        `when`(documentLookupPort.readTextContent(documentId)).thenReturn("긴급 계약 검토 알림이 필요한 문서입니다.")
+        `when`(documentLookupPort.readTextContent(documentId, "local-dev-user")).thenReturn("긴급 계약 검토 알림이 필요한 문서입니다.")
         `when`(aiAnalysisPort.submit(AiAnalysisCommand(documentId))).thenReturn(
             AiAnalysisResult(state = "QUEUED", provider = "local-stub")
         )
         `when`(
             notificationDispatchPort.dispatchAnalysisCompleted(
                 documentId,
+                "local-dev-user",
                 listOf("계약", "검토", "알림", "긴급"),
                 98
             )
@@ -88,7 +89,7 @@ class AnalysisApiTest {
             ?.get(1)
             ?: error("jobId not found")
 
-        verify(documentLookupPort).updateStatus(documentId, "ANALYSIS_QUEUED")
+        verify(documentLookupPort).updateStatus(documentId, "ANALYSIS_QUEUED", "local-dev-user")
 
         analysisJobRepository.findById(jobId).get().also {
             it.createdAt = Instant.now().minusSeconds(2)
@@ -99,7 +100,7 @@ class AnalysisApiTest {
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.state").value("PROCESSING"))
 
-        verify(documentLookupPort, atLeastOnce()).updateStatus(documentId, "ANALYSIS_PROCESSING")
+        verify(documentLookupPort, atLeastOnce()).updateStatus(documentId, "ANALYSIS_PROCESSING", "local-dev-user")
 
         analysisJobRepository.findById(jobId).get().also {
             it.createdAt = Instant.now().minusSeconds(4)
@@ -125,9 +126,10 @@ class AnalysisApiTest {
             "keyword detections should not be duplicated"
         }
 
-        verify(documentLookupPort, atLeastOnce()).updateStatus(documentId, "ANALYSIS_COMPLETED")
+        verify(documentLookupPort, atLeastOnce()).updateStatus(documentId, "ANALYSIS_COMPLETED", "local-dev-user")
         verify(notificationDispatchPort).dispatchAnalysisCompleted(
             documentId,
+            "local-dev-user",
             listOf("계약", "검토", "알림", "긴급"),
             98
         )
@@ -136,7 +138,7 @@ class AnalysisApiTest {
     @Test
     fun `returns standard not found error for missing document`() {
         val documentId = "22222222-2222-2222-2222-222222222222"
-        `when`(documentLookupPort.exists(documentId)).thenReturn(false)
+        `when`(documentLookupPort.exists(documentId, "local-dev-user")).thenReturn(false)
 
         mockMvc.perform(
             post("/api/v1/analysis/jobs")
@@ -146,5 +148,36 @@ class AnalysisApiTest {
             .andExpect(status().isNotFound)
             .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"))
             .andExpect(jsonPath("$.traceId").value(not(blankOrNullString())))
+    }
+
+    @Test
+    fun `separates analysis jobs by owner header`() {
+        val documentId = "33333333-3333-3333-3333-333333333333"
+        `when`(documentLookupPort.exists(documentId, "alice-user")).thenReturn(true)
+        `when`(aiAnalysisPort.submit(AiAnalysisCommand(documentId))).thenReturn(
+            AiAnalysisResult(state = "QUEUED", provider = "local-stub")
+        )
+
+        val created = mockMvc.perform(
+            post("/api/v1/analysis/jobs")
+                .header("X-SmartDoc-User-Id", "alice-user")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"documentId":"$documentId"}""")
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.ownerUserId").value("alice-user"))
+            .andReturn()
+
+        val jobId = Regex(""""jobId":"([^"]+)"""")
+            .find(created.response.contentAsString)
+            ?.groupValues
+            ?.get(1)
+            ?: error("jobId not found")
+
+        mockMvc.perform(
+            get("/api/v1/analysis/jobs/$jobId")
+                .header("X-SmartDoc-User-Id", "bob-user")
+        )
+            .andExpect(status().isNotFound)
     }
 }

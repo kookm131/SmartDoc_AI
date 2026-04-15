@@ -28,6 +28,8 @@ Auth v1은 별도 서비스 없이 Gateway 내부 H2(in-memory)에 사용자 정
 - 보호 API: `GET /api/v1/auth/me` 및 document/analysis/notification 프록시 API 전체
 - 보호 API 호출 시 `Authorization: Bearer <accessToken>` 헤더가 필요합니다.
 - 로컬 기본 seed 계정: `test@smartdoc.local` / `password`
+- Gateway는 인증된 사용자를 downstream 서비스에 `X-SmartDoc-User-Id`, `X-SmartDoc-User-Email` 헤더로 전달합니다.
+- document/analysis/notification 서비스는 `X-SmartDoc-User-Id` 기준으로 사용자별 데이터를 분리합니다.
 
 ### `GET /` 응답 예시 (`200 OK`)
 ```json
@@ -125,6 +127,7 @@ Auth v1은 별도 서비스 없이 Gateway 내부 H2(in-memory)에 사용자 정
 ```json
 {
   "documentId": "uuid",
+  "ownerUserId": "uuid",
   "filename": "invoice-2026-04.pdf",
   "fileKey": "uploads/invoice-2026-04.pdf",
   "contentType": "application/pdf",
@@ -168,6 +171,7 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 ```json
 {
   "documentId": "uuid",
+  "ownerUserId": "uuid",
   "filename": "sample.pdf",
   "fileKey": "uploads/sample.pdf",
   "contentType": "application/pdf",
@@ -192,6 +196,7 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 ```json
 {
   "documentId": "uuid",
+  "ownerUserId": "uuid",
   "filename": "invoice-2026-04.pdf",
   "fileKey": "uploads/invoice-2026-04.pdf",
   "contentType": "application/pdf",
@@ -207,6 +212,7 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 ```json
 {
   "documentId": "uuid",
+  "ownerUserId": "uuid",
   "fileKey": "uploads/sample.txt",
   "contentType": "text/plain",
   "textContent": "긴급 계약 검토 알림이 필요한 문서입니다."
@@ -218,6 +224,7 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 [
   {
     "documentId": "uuid",
+    "ownerUserId": "uuid",
     "filename": "invoice-2026-04.pdf",
     "fileKey": "uploads/invoice-2026-04.pdf",
     "contentType": "application/pdf",
@@ -240,6 +247,7 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 ```json
 {
   "documentId": "uuid",
+  "ownerUserId": "uuid",
   "filename": "invoice-2026-04.pdf",
   "fileKey": "uploads/invoice-2026-04.pdf",
   "contentType": "application/pdf",
@@ -255,7 +263,7 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 
 로컬 저장소:
 - 현재 `analysis` 서비스는 JPA + H2(in-memory)로 `analysis_jobs`를 저장하며, 이후 MSSQL로 전환 예정
-- `analysis_jobs` 최소 필드: `id`, `document_id`, `state`, `analysis_provider`, `result_summary`, `risk_score`, `keywords`, `notification_dispatched_at`, `created_at`
+- `analysis_jobs` 최소 필드: `id`, `owner_user_id`, `document_id`, `state`, `analysis_provider`, `result_summary`, `risk_score`, `keywords`, `notification_dispatched_at`, `created_at`
 - `keyword_detections` 최소 필드: `id`, `analysis_job_id`, `keyword`, `confidence`, `created_at`
 - 로컬 stub 상태 전이: `QUEUED` -> `PROCESSING` -> `COMPLETED`
 
@@ -271,6 +279,7 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 ```json
 {
   "jobId": "uuid",
+  "ownerUserId": "uuid",
   "documentId": "uuid",
   "state": "QUEUED",
   "createdAt": "2026-04-14T08:00:00Z",
@@ -296,6 +305,7 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 ```json
 {
   "jobId": "uuid",
+  "ownerUserId": "uuid",
   "documentId": "uuid",
   "state": "COMPLETED",
   "createdAt": "2026-04-14T08:00:00Z",
@@ -315,8 +325,8 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 
 로컬 저장소:
 - 현재 `notification` 서비스는 JPA + H2(in-memory)로 `notification_events`를 저장하며, 이후 MSSQL로 전환 예정
-- `notification_events` 최소 필드: `id`, `document_id`, `channel`, `message`, `status`, `created_at`
-- `notification_rules` 최소 필드: `id`, `keyword`, `channel`, `enabled`, `created_at`
+- `notification_events` 최소 필드: `id`, `owner_user_id`, `document_id`, `channel`, `message`, `status`, `created_at`
+- `notification_rules` 최소 필드: `id`, `owner_user_id`, `keyword`, `channel`, `enabled`, `created_at`
 - 기본 로컬 규칙: `keyword=계약`, `channel=slack`, `enabled=true`
 
 ### `POST /api/v1/notifications/dispatch` 수동 요청/응답 예시
@@ -333,6 +343,7 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 ```json
 {
   "eventId": "uuid",
+  "ownerUserId": "uuid",
   "documentId": "uuid",
   "channel": "slack",
   "message": "긴급 검토가 필요한 문서입니다.",
@@ -360,6 +371,7 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 [
   {
     "eventId": "uuid",
+    "ownerUserId": "uuid",
     "documentId": "uuid",
     "channel": "slack",
     "message": "분석 완료: '계약' 키워드 규칙이 매칭되었습니다. 위험 점수 24점",

@@ -57,6 +57,8 @@ class GatewayProxyApiTest {
             .andExpect(jsonPath("$.documentId").value("doc-1"))
 
         upstreamServer.assertLastRequest("POST", "/api/v1/documents")
+        upstreamServer.assertLastHeaderPresent("X-SmartDoc-User-Id")
+        upstreamServer.assertLastHeader("X-SmartDoc-User-Email", "test@smartdoc.local")
     }
 
     @Test
@@ -238,6 +240,7 @@ class StubUpstreamServer {
     private var expectedPath: String = "/"
     private var lastMethod: String? = null
     private var lastPath: String? = null
+    private var lastHeaders: Map<String, List<String>> = emptyMap()
 
     fun start() {
         if (server != null) {
@@ -263,6 +266,7 @@ class StubUpstreamServer {
         expectedPath = "/"
         lastMethod = null
         lastPath = null
+        lastHeaders = emptyMap()
         start()
     }
 
@@ -280,9 +284,24 @@ class StubUpstreamServer {
         check(lastPath == path) { "expected path $path, got $lastPath" }
     }
 
+    fun assertLastHeader(name: String, value: String) {
+        val actual = lastHeaders.firstNotNullOfOrNull { (key, values) ->
+            values.firstOrNull()?.takeIf { key.equals(name, ignoreCase = true) }
+        }
+        check(actual == value) { "expected header $name=$value, got $actual" }
+    }
+
+    fun assertLastHeaderPresent(name: String) {
+        val actual = lastHeaders.firstNotNullOfOrNull { (key, values) ->
+            values.firstOrNull()?.takeIf { key.equals(name, ignoreCase = true) }
+        }
+        check(!actual.isNullOrBlank()) { "expected header $name to be present" }
+    }
+
     private fun handle(exchange: HttpExchange) {
         lastMethod = exchange.requestMethod
         lastPath = exchange.requestURI.path
+        lastHeaders = exchange.requestHeaders.mapKeys { it.key }
 
         val status = if (lastMethod == expectedMethod && lastPath == expectedPath) {
             responseStatus

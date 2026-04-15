@@ -27,6 +27,12 @@ fi
 
 auth_header="Authorization: Bearer $access_token"
 
+echo "Ensuring notification rule through gateway..."
+curl -fsS -X POST "$GATEWAY_BASE_URL/api/v1/notifications/rules" \
+  -H "$auth_header" \
+  -H "Content-Type: application/json" \
+  -d '{"keyword":"계약","channel":"slack","enabled":true}' >/dev/null
+
 upload_file="$(mktemp /tmp/smartdoc-gateway-smoke-XXXXXX.txt)"
 printf '긴급 계약 검토 알림이 필요한 SmartDoc gateway smoke test document\n' > "$upload_file"
 

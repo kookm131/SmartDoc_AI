@@ -144,6 +144,48 @@ class DocumentApiTest {
     }
 
     @Test
+    fun `separates documents by owner header`() {
+        val aliceCreated = mockMvc.perform(
+            post("/api/v1/documents")
+                .header("X-SmartDoc-User-Id", "alice-user")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"filename":"alice.pdf","fileKey":"uploads/alice.pdf"}""")
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.ownerUserId").value("alice-user"))
+            .andReturn()
+
+        val aliceDocumentId = Regex(""""documentId":"([^"]+)"""")
+            .find(aliceCreated.response.contentAsString)
+            ?.groupValues
+            ?.get(1)
+            ?: error("documentId not found")
+
+        mockMvc.perform(
+            post("/api/v1/documents")
+                .header("X-SmartDoc-User-Id", "bob-user")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"filename":"bob.pdf","fileKey":"uploads/bob.pdf"}""")
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.ownerUserId").value("bob-user"))
+
+        mockMvc.perform(
+            get("/api/v1/documents")
+                .header("X-SmartDoc-User-Id", "alice-user")
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.length()").value(1))
+            .andExpect(jsonPath("$[0].documentId").value(aliceDocumentId))
+
+        mockMvc.perform(
+            get("/api/v1/documents/$aliceDocumentId")
+                .header("X-SmartDoc-User-Id", "bob-user")
+        )
+            .andExpect(status().isNotFound)
+    }
+
+    @Test
     fun `returns validation error for empty upload`() {
         val file = MockMultipartFile(
             "file",

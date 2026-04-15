@@ -57,6 +57,7 @@ data class DocumentCreateRequest(
 
 data class DocumentCreateResponse(
     val documentId: String,
+    val ownerUserId: String,
     val filename: String,
     val fileKey: String,
     val contentType: String?,
@@ -71,6 +72,7 @@ data class DocumentStatusUpdateRequest(
 
 data class DocumentContentResponse(
     val documentId: String,
+    val ownerUserId: String,
     val fileKey: String,
     val contentType: String?,
     val textContent: String?
@@ -208,6 +210,12 @@ class AwsObjectStorageAdapter : ObjectStoragePort {
 
 class ResourceNotFoundException(message: String) : RuntimeException(message)
 
+private const val SMARTDOC_USER_ID_HEADER = "X-SmartDoc-User-Id"
+private const val LOCAL_DEV_OWNER_USER_ID = "local-dev-user"
+
+private fun ownerUserIdFrom(request: HttpServletRequest): String =
+    request.getHeader(SMARTDOC_USER_ID_HEADER)?.trim()?.takeIf { it.isNotBlank() } ?: LOCAL_DEV_OWNER_USER_ID
+
 @Entity
 @Table(name = "documents")
 class DocumentEntity(
@@ -217,6 +225,9 @@ class DocumentEntity(
 
     @Column(name = "file_key", nullable = false, length = 512)
     var fileKey: String = "",
+
+    @Column(name = "owner_user_id", nullable = false, length = 36)
+    var ownerUserId: String = LOCAL_DEV_OWNER_USER_ID,
 
     @Column(nullable = false, length = 255)
     var filename: String = "",
@@ -246,14 +257,17 @@ class DocumentEntity(
     }
 }
 
-interface DocumentRepository : JpaRepository<DocumentEntity, String>
+interface DocumentRepository : JpaRepository<DocumentEntity, String> {
+    fun findByIdAndOwnerUserId(id: String, ownerUserId: String): DocumentEntity?
+    fun findByOwnerUserId(ownerUserId: String): List<DocumentEntity>
+}
 
 @Service
 class DocumentService(
     private val documentRepository: DocumentRepository,
     private val objectStoragePort: ObjectStoragePort
 ) {
-    fun create(request: DocumentCreateRequest): DocumentCreateResponse {
+    fun create(request: DocumentCreateRequest, ownerUserId: String): DocumentCreateResponse {
         val stored = objectStoragePort.store(
             ObjectStoreCommand(
                 filename = request.filename.trim(),
@@ -265,6 +279,7 @@ class DocumentService(
         val saved = documentRepository.save(
             DocumentEntity(
                 fileKey = stored.fileKey,
+                ownerUserId = ownerUserId,
                 filename = request.filename.trim(),
                 contentType = request.contentType?.trim(),
                 status = "RECEIVED"
@@ -274,7 +289,7 @@ class DocumentService(
         return toResponse(saved)
     }
 
-    fun upload(file: MultipartFile, fileKey: String?): DocumentCreateResponse {
+    fun upload(file: MultipartFile, fileKey: String?, ownerUserId: String): DocumentCreateResponse {
         val filename = Path.of(file.originalFilename ?: "").fileName.toString().trim()
         val contentType = file.contentType?.trim()?.ifBlank { null } ?: "application/octet-stream"
 
@@ -294,6 +309,7 @@ class DocumentService(
         val saved = documentRepository.save(
             DocumentEntity(
                 fileKey = stored.fileKey,
+                ownerUserId = ownerUserId,
                 filename = filename,
                 contentType = contentType,
                 status = "RECEIVED"
@@ -303,34 +319,35 @@ class DocumentService(
         return toResponse(saved)
     }
 
-    fun getById(documentId: String): DocumentCreateResponse {
-        val found = documentRepository.findById(documentId)
-            .orElseThrow { ResourceNotFoundException("document not found: $documentId") }
+    fun getById(documentId: String, ownerUserId: String): DocumentCreateResponse {
+        val found = documentRepository.findByIdAndOwnerUserId(documentId, ownerUserId)
+            ?: throw ResourceNotFoundException("document not found: $documentId")
         return toResponse(found)
     }
 
-    fun getContent(documentId: String): DocumentContentResponse {
-        val found = documentRepository.findById(documentId)
-            .orElseThrow { ResourceNotFoundException("document not found: $documentId") }
+    fun getContent(documentId: String, ownerUserId: String): DocumentContentResponse {
+        val found = documentRepository.findByIdAndOwnerUserId(documentId, ownerUserId)
+            ?: throw ResourceNotFoundException("document not found: $documentId")
         val content = objectStoragePort.readText(found.fileKey, found.contentType)
         return DocumentContentResponse(
             documentId = found.id,
+            ownerUserId = found.ownerUserId,
             fileKey = found.fileKey,
             contentType = found.contentType,
             textContent = content.textContent
         )
     }
 
-    fun list(): List<DocumentCreateResponse> = documentRepository.findAll()
+    fun list(ownerUserId: String): List<DocumentCreateResponse> = documentRepository.findByOwnerUserId(ownerUserId)
         .sortedByDescending { it.createdAt }
         .map(::toResponse)
 
-    fun updateStatus(documentId: String, request: DocumentStatusUpdateRequest): DocumentCreateResponse {
+    fun updateStatus(documentId: String, request: DocumentStatusUpdateRequest, ownerUserId: String): DocumentCreateResponse {
         val normalizedStatus = request.status.trim().uppercase()
         require(normalizedStatus in ALLOWED_STATUSES) { "unsupported document status: $normalizedStatus" }
 
-        val found = documentRepository.findById(documentId)
-            .orElseThrow { ResourceNotFoundException("document not found: $documentId") }
+        val found = documentRepository.findByIdAndOwnerUserId(documentId, ownerUserId)
+            ?: throw ResourceNotFoundException("document not found: $documentId")
 
         found.status = normalizedStatus
         return toResponse(documentRepository.save(found))
@@ -339,6 +356,7 @@ class DocumentService(
     private fun toResponse(entity: DocumentEntity): DocumentCreateResponse =
         DocumentCreateResponse(
             documentId = entity.id,
+            ownerUserId = entity.ownerUserId,
             filename = entity.filename,
             fileKey = entity.fileKey,
             contentType = entity.contentType,
@@ -371,50 +389,55 @@ class DocumentController(
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
     fun createDocument(
-        @RequestBody request: DocumentCreateRequest
+        @RequestBody request: DocumentCreateRequest,
+        servletRequest: HttpServletRequest
     ): DocumentCreateResponse {
         require(request.filename.isNotBlank()) { "filename must not be blank" }
         require(request.fileKey.isNotBlank()) { "fileKey must not be blank" }
-        return documentService.create(request)
+        return documentService.create(request, ownerUserIdFrom(servletRequest))
     }
 
     @PostMapping("/upload")
     @ResponseStatus(HttpStatus.CREATED)
     fun uploadDocument(
         @RequestParam("file") file: MultipartFile,
-        @RequestParam("fileKey", required = false) fileKey: String?
-    ): DocumentCreateResponse = documentService.upload(file, fileKey)
+        @RequestParam("fileKey", required = false) fileKey: String?,
+        servletRequest: HttpServletRequest
+    ): DocumentCreateResponse = documentService.upload(file, fileKey, ownerUserIdFrom(servletRequest))
 
     @GetMapping("/{id}")
-    fun getDocument(@PathVariable id: String): DocumentCreateResponse {
+    fun getDocument(@PathVariable id: String, servletRequest: HttpServletRequest): DocumentCreateResponse {
         require(id.isNotBlank()) { "id must not be blank" }
-        return documentService.getById(id)
+        return documentService.getById(id, ownerUserIdFrom(servletRequest))
     }
 
     @GetMapping("/{id}/content")
-    fun getDocumentContent(@PathVariable id: String): DocumentContentResponse {
+    fun getDocumentContent(@PathVariable id: String, servletRequest: HttpServletRequest): DocumentContentResponse {
         require(id.isNotBlank()) { "id must not be blank" }
-        return documentService.getContent(id)
+        return documentService.getContent(id, ownerUserIdFrom(servletRequest))
     }
 
     @GetMapping
-    fun listDocuments(): List<DocumentCreateResponse> = documentService.list()
+    fun listDocuments(servletRequest: HttpServletRequest): List<DocumentCreateResponse> =
+        documentService.list(ownerUserIdFrom(servletRequest))
 
     @PatchMapping("/{id}/status")
     fun updateDocumentStatus(
         @PathVariable id: String,
-        @RequestBody request: DocumentStatusUpdateRequest
+        @RequestBody request: DocumentStatusUpdateRequest,
+        servletRequest: HttpServletRequest
     ): DocumentCreateResponse {
         require(id.isNotBlank()) { "id must not be blank" }
         require(request.status.isNotBlank()) { "status must not be blank" }
-        return documentService.updateStatus(id, request)
+        return documentService.updateStatus(id, request, ownerUserIdFrom(servletRequest))
     }
 
     @PostMapping("/{id}/status")
     fun postDocumentStatus(
         @PathVariable id: String,
-        @RequestBody request: DocumentStatusUpdateRequest
-    ): DocumentCreateResponse = updateDocumentStatus(id, request)
+        @RequestBody request: DocumentStatusUpdateRequest,
+        servletRequest: HttpServletRequest
+    ): DocumentCreateResponse = updateDocumentStatus(id, request, servletRequest)
 }
 
 @RestControllerAdvice

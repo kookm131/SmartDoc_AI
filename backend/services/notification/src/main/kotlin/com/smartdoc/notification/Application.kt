@@ -31,9 +31,10 @@ import java.util.UUID
 class Application {
     @Bean
     fun seedNotificationRules(notificationRuleRepository: NotificationRuleRepository) = CommandLineRunner {
-        if (!notificationRuleRepository.existsByKeywordAndChannel("계약", "slack")) {
+        if (!notificationRuleRepository.existsByOwnerUserIdAndKeywordAndChannel(LOCAL_DEV_OWNER_USER_ID, "계약", "slack")) {
             notificationRuleRepository.save(
                 NotificationRuleEntity(
+                    ownerUserId = LOCAL_DEV_OWNER_USER_ID,
                     keyword = "계약",
                     channel = "slack",
                     enabled = true
@@ -67,6 +68,7 @@ data class NotificationDispatchRequest(
 
 data class NotificationEventResponse(
     val eventId: String,
+    val ownerUserId: String,
     val documentId: String,
     val channel: String,
     val message: String,
@@ -98,6 +100,12 @@ data class ApiErrorResponse(
 
 class ResourceNotFoundException(message: String) : RuntimeException(message)
 
+private const val SMARTDOC_USER_ID_HEADER = "X-SmartDoc-User-Id"
+private const val LOCAL_DEV_OWNER_USER_ID = "local-dev-user"
+
+private fun ownerUserIdFrom(request: HttpServletRequest): String =
+    request.getHeader(SMARTDOC_USER_ID_HEADER)?.trim()?.takeIf { it.isNotBlank() } ?: LOCAL_DEV_OWNER_USER_ID
+
 @Entity
 @Table(name = "notification_events")
 class NotificationEventEntity(
@@ -107,6 +115,9 @@ class NotificationEventEntity(
 
     @Column(name = "document_id", nullable = false, length = 36)
     var documentId: String = "",
+
+    @Column(name = "owner_user_id", nullable = false, length = 36)
+    var ownerUserId: String = LOCAL_DEV_OWNER_USER_ID,
 
     @Column(nullable = false, length = 32)
     var channel: String = "",
@@ -126,7 +137,10 @@ class NotificationEventEntity(
     }
 }
 
-interface NotificationEventRepository : JpaRepository<NotificationEventEntity, String>
+interface NotificationEventRepository : JpaRepository<NotificationEventEntity, String> {
+    fun findByIdAndOwnerUserId(id: String, ownerUserId: String): NotificationEventEntity?
+    fun findByOwnerUserId(ownerUserId: String): List<NotificationEventEntity>
+}
 
 @Entity
 @Table(
@@ -134,7 +148,7 @@ interface NotificationEventRepository : JpaRepository<NotificationEventEntity, S
     uniqueConstraints = [
         UniqueConstraint(
             name = "uk_notification_rules_keyword_channel",
-            columnNames = ["keyword", "channel"]
+            columnNames = ["owner_user_id", "keyword", "channel"]
         )
     ]
 )
@@ -145,6 +159,9 @@ class NotificationRuleEntity(
 
     @Column(nullable = false, length = 128)
     var keyword: String = "",
+
+    @Column(name = "owner_user_id", nullable = false, length = 36)
+    var ownerUserId: String = LOCAL_DEV_OWNER_USER_ID,
 
     @Column(nullable = false, length = 32)
     var channel: String = "",
@@ -162,9 +179,10 @@ class NotificationRuleEntity(
 }
 
 interface NotificationRuleRepository : JpaRepository<NotificationRuleEntity, String> {
-    fun existsByKeywordAndChannel(keyword: String, channel: String): Boolean
-    fun findByKeywordAndChannel(keyword: String, channel: String): NotificationRuleEntity?
-    fun findByEnabledTrue(): List<NotificationRuleEntity>
+    fun existsByOwnerUserIdAndKeywordAndChannel(ownerUserId: String, keyword: String, channel: String): Boolean
+    fun findByOwnerUserIdAndKeywordAndChannel(ownerUserId: String, keyword: String, channel: String): NotificationRuleEntity?
+    fun findByOwnerUserIdAndEnabledTrue(ownerUserId: String): List<NotificationRuleEntity>
+    fun findByOwnerUserId(ownerUserId: String): List<NotificationRuleEntity>
 }
 
 @Service
@@ -172,14 +190,18 @@ class NotificationService(
     private val notificationEventRepository: NotificationEventRepository,
     private val notificationRuleRepository: NotificationRuleRepository
 ) {
-    fun create(request: NotificationDispatchRequest): NotificationEventResponse? {
+    fun create(request: NotificationDispatchRequest, ownerUserId: String): NotificationEventResponse? {
         if (request.keywords.isNotEmpty()) {
-            val matchingRule = notificationRuleRepository.findByEnabledTrue()
+            // Ensure default rules exist for this user
+            ensureDefaultRulesExist(ownerUserId)
+
+            val matchingRule = notificationRuleRepository.findByOwnerUserIdAndEnabledTrue(ownerUserId)
                 .firstOrNull { rule -> request.keywords.any { it == rule.keyword } }
                 ?: return null
 
             return saveEvent(
                 documentId = request.documentId.trim(),
+                ownerUserId = ownerUserId,
                 channel = matchingRule.channel,
                 message = analysisCompletedMessage(
                     keyword = matchingRule.keyword,
@@ -190,17 +212,19 @@ class NotificationService(
 
         return saveEvent(
             documentId = request.documentId.trim(),
+            ownerUserId = ownerUserId,
             channel = request.channel?.trim()?.lowercase() ?: "",
             message = request.message?.trim() ?: ""
         )
     }
 
-    fun createRule(request: NotificationRuleCreateRequest): NotificationRuleResponse {
+    fun createRule(request: NotificationRuleCreateRequest, ownerUserId: String): NotificationRuleResponse {
         val keyword = request.keyword.trim()
         val channel = request.channel.trim().lowercase()
-        val rule = notificationRuleRepository.findByKeywordAndChannel(keyword, channel)
+        val rule = notificationRuleRepository.findByOwnerUserIdAndKeywordAndChannel(ownerUserId, keyword, channel)
             ?.also { it.enabled = request.enabled }
             ?: NotificationRuleEntity(
+                ownerUserId = ownerUserId,
                 keyword = keyword,
                 channel = channel,
                 enabled = request.enabled
@@ -209,19 +233,34 @@ class NotificationService(
         return toRuleResponse(saved)
     }
 
-    fun listRules(): List<NotificationRuleResponse> =
-        notificationRuleRepository.findAll()
+    fun listRules(ownerUserId: String): List<NotificationRuleResponse> =
+        notificationRuleRepository.findByOwnerUserId(ownerUserId)
             .sortedWith(compareBy<NotificationRuleEntity> { it.keyword }.thenBy { it.channel })
             .map(::toRuleResponse)
 
+    private fun ensureDefaultRulesExist(ownerUserId: String) {
+        if (!notificationRuleRepository.existsByOwnerUserIdAndKeywordAndChannel(ownerUserId, "계약", "slack")) {
+            notificationRuleRepository.save(
+                NotificationRuleEntity(
+                    ownerUserId = ownerUserId,
+                    keyword = "계약",
+                    channel = "slack",
+                    enabled = true
+                )
+            )
+        }
+    }
+
     private fun saveEvent(
         documentId: String,
+        ownerUserId: String,
         channel: String,
         message: String
     ): NotificationEventResponse {
         val saved = notificationEventRepository.save(
             NotificationEventEntity(
                 documentId = documentId,
+                ownerUserId = ownerUserId,
                 channel = channel,
                 message = message,
                 status = "DISPATCHED"
@@ -235,19 +274,20 @@ class NotificationService(
         return "분석 완료: '$keyword' 키워드 규칙이 매칭되었습니다. $score"
     }
 
-    fun get(eventId: String): NotificationEventResponse =
-        notificationEventRepository.findById(eventId)
-            .map(::toResponse)
-            .orElseThrow { ResourceNotFoundException("notification event not found: $eventId") }
+    fun get(eventId: String, ownerUserId: String): NotificationEventResponse =
+        notificationEventRepository.findByIdAndOwnerUserId(eventId, ownerUserId)
+            ?.let(::toResponse)
+            ?: throw ResourceNotFoundException("notification event not found: $eventId")
 
-    fun list(): List<NotificationEventResponse> =
-        notificationEventRepository.findAll()
+    fun list(ownerUserId: String): List<NotificationEventResponse> =
+        notificationEventRepository.findByOwnerUserId(ownerUserId)
             .sortedByDescending { it.createdAt }
             .map(::toResponse)
 
     private fun toResponse(entity: NotificationEventEntity): NotificationEventResponse =
         NotificationEventResponse(
             eventId = entity.id,
+            ownerUserId = entity.ownerUserId,
             documentId = entity.documentId,
             channel = entity.channel,
             message = entity.message,
@@ -271,7 +311,10 @@ class NotificationController(
     private val notificationService: NotificationService
 ) {
     @PostMapping("/dispatch")
-    fun dispatch(@RequestBody request: NotificationDispatchRequest): ResponseEntity<NotificationEventResponse> {
+    fun dispatch(
+        @RequestBody request: NotificationDispatchRequest,
+        servletRequest: HttpServletRequest
+    ): ResponseEntity<NotificationEventResponse> {
         require(request.documentId.isNotBlank()) { "documentId must not be blank" }
 
         if (request.keywords.isEmpty()) {
@@ -279,30 +322,35 @@ class NotificationController(
             require(!request.message.isNullOrBlank()) { "message must not be blank" }
         }
 
-        val event = notificationService.create(request)
+        val event = notificationService.create(request, ownerUserIdFrom(servletRequest))
             ?: return ResponseEntity.noContent().build()
 
         return ResponseEntity.status(HttpStatus.CREATED).body(event)
     }
 
     @GetMapping("/events/{id}")
-    fun getEvent(@PathVariable id: String): NotificationEventResponse {
+    fun getEvent(@PathVariable id: String, servletRequest: HttpServletRequest): NotificationEventResponse {
         require(id.isNotBlank()) { "id must not be blank" }
-        return notificationService.get(id)
+        return notificationService.get(id, ownerUserIdFrom(servletRequest))
     }
 
     @GetMapping("/events")
-    fun listEvents(): List<NotificationEventResponse> = notificationService.list()
+    fun listEvents(servletRequest: HttpServletRequest): List<NotificationEventResponse> =
+        notificationService.list(ownerUserIdFrom(servletRequest))
 
     @GetMapping("/rules")
-    fun listRules(): List<NotificationRuleResponse> = notificationService.listRules()
+    fun listRules(servletRequest: HttpServletRequest): List<NotificationRuleResponse> =
+        notificationService.listRules(ownerUserIdFrom(servletRequest))
 
     @PostMapping("/rules")
     @ResponseStatus(HttpStatus.CREATED)
-    fun createRule(@RequestBody request: NotificationRuleCreateRequest): NotificationRuleResponse {
+    fun createRule(
+        @RequestBody request: NotificationRuleCreateRequest,
+        servletRequest: HttpServletRequest
+    ): NotificationRuleResponse {
         require(request.keyword.isNotBlank()) { "keyword must not be blank" }
         require(request.channel.isNotBlank()) { "channel must not be blank" }
-        return notificationService.createRule(request)
+        return notificationService.createRule(request, ownerUserIdFrom(servletRequest))
     }
 }
 

@@ -56,6 +56,7 @@ data class AnalysisJobCreateRequest(
 
 data class AnalysisJobResponse(
     val jobId: String,
+    val ownerUserId: String,
     val documentId: String,
     val state: String,
     val createdAt: Instant,
@@ -79,10 +80,10 @@ interface AiAnalysisPort {
 }
 
 interface DocumentLookupPort {
-    fun exists(documentId: String): Boolean
-    fun get(documentId: String): DocumentInfo
-    fun readTextContent(documentId: String): String?
-    fun updateStatus(documentId: String, status: String)
+    fun exists(documentId: String, ownerUserId: String): Boolean
+    fun get(documentId: String, ownerUserId: String): DocumentInfo
+    fun readTextContent(documentId: String, ownerUserId: String): String?
+    fun updateStatus(documentId: String, status: String, ownerUserId: String)
 }
 
 data class DocumentInfo(
@@ -102,6 +103,7 @@ data class DocumentContentInfo(
 interface NotificationDispatchPort {
     fun dispatchAnalysisCompleted(
         documentId: String,
+        ownerUserId: String,
         keywords: List<String>,
         riskScore: Int?
     ): Boolean
@@ -147,9 +149,10 @@ class LocalDocumentLookupAdapter(
         )
         .build()
 
-    override fun exists(documentId: String): Boolean = try {
+    override fun exists(documentId: String, ownerUserId: String): Boolean = try {
         client.get()
             .uri("/api/v1/documents/{id}", documentId)
+            .header(SMARTDOC_USER_ID_HEADER, ownerUserId)
             .retrieve()
             .toBodilessEntity()
         true
@@ -161,9 +164,10 @@ class LocalDocumentLookupAdapter(
         throw ExternalServiceException("document service lookup failed")
     }
 
-    override fun get(documentId: String): DocumentInfo = try {
+    override fun get(documentId: String, ownerUserId: String): DocumentInfo = try {
         client.get()
             .uri("/api/v1/documents/{id}", documentId)
+            .header(SMARTDOC_USER_ID_HEADER, ownerUserId)
             .retrieve()
             .body(DocumentInfo::class.java)
             ?: throw ExternalServiceException("document service returned empty lookup response")
@@ -175,9 +179,10 @@ class LocalDocumentLookupAdapter(
         throw ExternalServiceException("document service lookup failed")
     }
 
-    override fun readTextContent(documentId: String): String? = try {
+    override fun readTextContent(documentId: String, ownerUserId: String): String? = try {
         client.get()
             .uri("/api/v1/documents/{id}/content", documentId)
+            .header(SMARTDOC_USER_ID_HEADER, ownerUserId)
             .retrieve()
             .body(DocumentContentInfo::class.java)
             ?.textContent
@@ -187,10 +192,11 @@ class LocalDocumentLookupAdapter(
         null
     }
 
-    override fun updateStatus(documentId: String, status: String) {
+    override fun updateStatus(documentId: String, status: String, ownerUserId: String) {
         try {
             client.post()
                 .uri("/api/v1/documents/{id}/status", documentId)
+                .header(SMARTDOC_USER_ID_HEADER, ownerUserId)
                 .body(mapOf("status" to status))
                 .retrieve()
                 .toBodilessEntity()
@@ -207,8 +213,8 @@ class LocalDocumentLookupAdapter(
 @Service
 @Profile("aws")
 class AwsDocumentLookupAdapter : DocumentLookupPort {
-    override fun exists(documentId: String): Boolean = true
-    override fun get(documentId: String): DocumentInfo =
+    override fun exists(documentId: String, ownerUserId: String): Boolean = true
+    override fun get(documentId: String, ownerUserId: String): DocumentInfo =
         DocumentInfo(
             documentId = documentId,
             filename = "aws-placeholder.pdf",
@@ -216,8 +222,8 @@ class AwsDocumentLookupAdapter : DocumentLookupPort {
             contentType = "application/pdf"
         )
 
-    override fun readTextContent(documentId: String): String? = null
-    override fun updateStatus(documentId: String, status: String) = Unit
+    override fun readTextContent(documentId: String, ownerUserId: String): String? = null
+    override fun updateStatus(documentId: String, status: String, ownerUserId: String) = Unit
 }
 
 @Service
@@ -244,6 +250,7 @@ class LocalNotificationDispatchAdapter(
 
     override fun dispatchAnalysisCompleted(
         documentId: String,
+        ownerUserId: String,
         keywords: List<String>,
         riskScore: Int?
     ): Boolean {
@@ -254,6 +261,7 @@ class LocalNotificationDispatchAdapter(
         return try {
             client.post()
                 .uri("/api/v1/notifications/dispatch")
+                .header(SMARTDOC_USER_ID_HEADER, ownerUserId)
                 .body(
                     mapOf(
                         "documentId" to documentId,
@@ -277,6 +285,7 @@ class LocalNotificationDispatchAdapter(
 class AwsNotificationDispatchAdapter : NotificationDispatchPort {
     override fun dispatchAnalysisCompleted(
         documentId: String,
+        ownerUserId: String,
         keywords: List<String>,
         riskScore: Int?
     ): Boolean = true
@@ -293,6 +302,12 @@ data class ApiErrorResponse(
 class ResourceNotFoundException(message: String) : RuntimeException(message)
 class ExternalServiceException(message: String) : RuntimeException(message)
 
+private const val SMARTDOC_USER_ID_HEADER = "X-SmartDoc-User-Id"
+private const val LOCAL_DEV_OWNER_USER_ID = "local-dev-user"
+
+private fun ownerUserIdFrom(request: HttpServletRequest): String =
+    request.getHeader(SMARTDOC_USER_ID_HEADER)?.trim()?.takeIf { it.isNotBlank() } ?: LOCAL_DEV_OWNER_USER_ID
+
 @Entity
 @Table(name = "analysis_jobs")
 class AnalysisJobEntity(
@@ -302,6 +317,9 @@ class AnalysisJobEntity(
 
     @Column(name = "document_id", nullable = false, length = 36)
     var documentId: String = "",
+
+    @Column(name = "owner_user_id", nullable = false, length = 36)
+    var ownerUserId: String = LOCAL_DEV_OWNER_USER_ID,
 
     @Column(nullable = false, length = 32)
     var state: String = "QUEUED",
@@ -330,7 +348,9 @@ class AnalysisJobEntity(
     }
 }
 
-interface AnalysisJobRepository : JpaRepository<AnalysisJobEntity, String>
+interface AnalysisJobRepository : JpaRepository<AnalysisJobEntity, String> {
+    fun findByIdAndOwnerUserId(id: String, ownerUserId: String): AnalysisJobEntity?
+}
 
 @Entity
 @Table(
@@ -378,9 +398,9 @@ class AnalysisJobService(
     private val analysisJobRepository: AnalysisJobRepository,
     private val keywordDetectionRepository: KeywordDetectionRepository
 ) {
-    fun create(request: AnalysisJobCreateRequest): AnalysisJobResponse {
+    fun create(request: AnalysisJobCreateRequest, ownerUserId: String): AnalysisJobResponse {
         val docId = request.documentId.trim()
-        if (!documentLookupPort.exists(docId)) {
+        if (!documentLookupPort.exists(docId, ownerUserId)) {
             throw ResourceNotFoundException("document not found: $docId")
         }
 
@@ -389,19 +409,20 @@ class AnalysisJobService(
         val saved = analysisJobRepository.save(
             AnalysisJobEntity(
                 documentId = docId,
+                ownerUserId = ownerUserId,
                 state = result.state,
                 analysisProvider = result.provider
             )
         )
-        documentLookupPort.updateStatus(docId, toDocumentStatus(saved.state))
+        documentLookupPort.updateStatus(docId, toDocumentStatus(saved.state), ownerUserId)
         return toResponse(saved)
     }
 
-    fun get(jobId: String): AnalysisJobResponse =
-        analysisJobRepository.findById(jobId)
-            .map(::advanceLocalState)
-            .map(::toResponse)
-            .orElseThrow { ResourceNotFoundException("analysis job not found: $jobId") }
+    fun get(jobId: String, ownerUserId: String): AnalysisJobResponse =
+        analysisJobRepository.findByIdAndOwnerUserId(jobId, ownerUserId)
+            ?.let(::advanceLocalState)
+            ?.let(::toResponse)
+            ?: throw ResourceNotFoundException("analysis job not found: $jobId")
 
     private fun advanceLocalState(entity: AnalysisJobEntity): AnalysisJobEntity {
         if (entity.state == "COMPLETED") {
@@ -421,7 +442,7 @@ class AnalysisJobService(
 
         entity.state = nextState
         if (nextState == "COMPLETED") {
-            val result = analyzeDocument(entity.documentId)
+            val result = analyzeDocument(entity.documentId, entity.ownerUserId)
             entity.resultSummary = result.summary
             entity.riskScore = result.riskScore
             entity.keywords = result.keywords.joinToString(",")
@@ -430,7 +451,7 @@ class AnalysisJobService(
         if (saved.state == "COMPLETED") {
             saveKeywordDetections(saved)
         }
-        documentLookupPort.updateStatus(saved.documentId, toDocumentStatus(saved.state))
+        documentLookupPort.updateStatus(saved.documentId, toDocumentStatus(saved.state), saved.ownerUserId)
         return dispatchCompletionNotification(saved)
     }
 
@@ -441,6 +462,7 @@ class AnalysisJobService(
 
         val dispatched = notificationDispatchPort.dispatchAnalysisCompleted(
             documentId = entity.documentId,
+            ownerUserId = entity.ownerUserId,
             keywords = keywordsFor(entity),
             riskScore = entity.riskScore
         )
@@ -470,9 +492,9 @@ class AnalysisJobService(
             }
     }
 
-    private fun analyzeDocument(documentId: String): LocalAnalysisResult {
-        val document = documentLookupPort.get(documentId)
-        val textContent = documentLookupPort.readTextContent(documentId)
+    private fun analyzeDocument(documentId: String, ownerUserId: String): LocalAnalysisResult {
+        val document = documentLookupPort.get(documentId, ownerUserId)
+        val textContent = documentLookupPort.readTextContent(documentId, ownerUserId)
         val searchTarget = listOfNotNull(textContent, document.filename, document.fileKey)
             .joinToString(" ")
             .lowercase()
@@ -520,6 +542,7 @@ class AnalysisJobService(
     private fun toResponse(entity: AnalysisJobEntity): AnalysisJobResponse =
         AnalysisJobResponse(
             jobId = entity.id,
+            ownerUserId = entity.ownerUserId,
             documentId = entity.documentId,
             state = entity.state,
             createdAt = entity.createdAt,
@@ -560,15 +583,18 @@ class AnalysisController(
 ) {
     @PostMapping
     @ResponseStatus(HttpStatus.CREATED)
-    fun createJob(@RequestBody request: AnalysisJobCreateRequest): AnalysisJobResponse {
+    fun createJob(
+        @RequestBody request: AnalysisJobCreateRequest,
+        servletRequest: HttpServletRequest
+    ): AnalysisJobResponse {
         require(request.documentId.isNotBlank()) { "documentId must not be blank" }
-        return analysisJobService.create(request)
+        return analysisJobService.create(request, ownerUserIdFrom(servletRequest))
     }
 
     @GetMapping("/{id}")
-    fun getJob(@PathVariable id: String): AnalysisJobResponse {
+    fun getJob(@PathVariable id: String, servletRequest: HttpServletRequest): AnalysisJobResponse {
         require(id.isNotBlank()) { "id must not be blank" }
-        return analysisJobService.get(id)
+        return analysisJobService.get(id, ownerUserIdFrom(servletRequest))
     }
 }
 

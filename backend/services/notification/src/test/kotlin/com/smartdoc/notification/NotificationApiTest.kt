@@ -155,4 +155,60 @@ class NotificationApiTest {
             "disabled rule should not create notification event"
         }
     }
+
+    @Test
+    fun `separates notification rules and events by owner header`() {
+        mockMvc.perform(
+            post("/api/v1/notifications/rules")
+                .header("X-SmartDoc-User-Id", "alice-user")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"keyword":"계약","channel":"slack","enabled":true}""")
+        )
+            .andExpect(status().isCreated)
+
+        mockMvc.perform(
+            post("/api/v1/notifications/rules")
+                .header("X-SmartDoc-User-Id", "bob-user")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"keyword":"위험","channel":"slack","enabled":true}""")
+        )
+            .andExpect(status().isCreated)
+
+        mockMvc.perform(
+            get("/api/v1/notifications/rules")
+                .header("X-SmartDoc-User-Id", "alice-user")
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.length()").value(1))
+            .andExpect(jsonPath("$[0].keyword").value("계약"))
+
+        val created = mockMvc.perform(
+            post("/api/v1/notifications/dispatch")
+                .header("X-SmartDoc-User-Id", "alice-user")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"documentId":"document-1","channel":"slack","message":"alice only"}""")
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.ownerUserId").value("alice-user"))
+            .andReturn()
+
+        val eventId = Regex(""""eventId":"([^"]+)"""")
+            .find(created.response.contentAsString)
+            ?.groupValues
+            ?.get(1)
+            ?: error("eventId not found")
+
+        mockMvc.perform(
+            get("/api/v1/notifications/events")
+                .header("X-SmartDoc-User-Id", "bob-user")
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.length()").value(0))
+
+        mockMvc.perform(
+            get("/api/v1/notifications/events/$eventId")
+                .header("X-SmartDoc-User-Id", "bob-user")
+        )
+            .andExpect(status().isNotFound)
+    }
 }
