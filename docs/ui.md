@@ -18,6 +18,7 @@
 - 알림 규칙 화면에서 `GET /api/v1/notifications/rules`, `POST /api/v1/notifications/rules`로 규칙 관리
 - 상세 화면에서 `POST /api/v1/analysis/jobs`로 분석 실행
 - 상세 화면에서 text/plain 파일 내용 기반 `resultSummary`, `riskScore`, `keywords` 표시
+- 분석 Job이 `FAILED`이면 실패 카드에 `errorCode`, `errorMessage`, `failedAt`을 표시하고 재시도 버튼으로 `POST /api/v1/analysis/jobs/{id}/retry` 호출
 - 분석 완료 후 enabled 알림 규칙과 키워드가 매칭되면 Slack 알림 이벤트 자동 생성
 - 상세 화면에서 `POST /api/v1/notifications/dispatch`로 Slack 알림 이벤트 수동 생성도 가능
 - 상세 화면에서 `GET /api/v1/notifications/events` 결과 중 현재 문서 이벤트 표시

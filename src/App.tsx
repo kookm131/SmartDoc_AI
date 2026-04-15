@@ -21,6 +21,7 @@ import {
   listNotificationRules,
   login,
   logout,
+  retryAnalysisJob,
   signup,
 } from './api';
 import {
@@ -70,6 +71,10 @@ function toApiError(error: unknown): ApiErrorResponse {
 
 const POLLING_INTERVAL_MS = 2000;
 const POLLING_COUNT_LIMIT = 5;
+
+function isTerminalAnalysisState(state: string): boolean {
+  return state === 'COMPLETED' || state === 'FAILED';
+}
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState<AuthUser | null>(null);
@@ -269,8 +274,38 @@ export default function App() {
         await new Promise((resolve) => window.setTimeout(resolve, POLLING_INTERVAL_MS));
         latest = await getAnalysisJob(latest.jobId);
         setAnalysisByDocumentId((prev) => ({ ...prev, [documentId]: latest }));
+        if (isTerminalAnalysisState(latest.state)) {
+          break;
+        }
         count += 1;
       }
+    } catch (error) {
+      setApiError(toApiError(error));
+    } finally {
+      setAnalysisPolling(false);
+    }
+  };
+
+  const handleRetryAnalysis = async (jobId: string) => {
+    try {
+      setAnalysisPolling(true);
+      const retried = await retryAnalysisJob(jobId);
+      setAnalysisByDocumentId((prev) => ({ ...prev, [retried.documentId]: retried }));
+      setApiError(null);
+
+      let latest = retried;
+      let count = 0;
+      while (count < POLLING_COUNT_LIMIT) {
+        await new Promise((resolve) => window.setTimeout(resolve, POLLING_INTERVAL_MS));
+        latest = await getAnalysisJob(latest.jobId);
+        setAnalysisByDocumentId((prev) => ({ ...prev, [latest.documentId]: latest }));
+        if (isTerminalAnalysisState(latest.state)) {
+          break;
+        }
+        count += 1;
+      }
+      await loadDocuments();
+      void loadNotificationEvents();
     } catch (error) {
       setApiError(toApiError(error));
     } finally {
@@ -418,6 +453,7 @@ export default function App() {
           document={selectedDoc}
           onBack={handleBack}
           onAnalyze={handleStartAnalysis}
+          onRetryAnalysis={handleRetryAnalysis}
           analysisJob={analysisByDocumentId[selectedDoc.documentId] ?? null}
           polling={analysisPolling}
           notificationEvents={notificationEvents.filter((event) => event.documentId === selectedDoc.documentId)}

@@ -97,13 +97,13 @@ sequenceDiagram
 - Backend: Spring Boot 3.x, Kotlin, Java 17
 - Frontend: React, Vite
 - Infra: EKS(Kubernetes), ALB, CloudWatch
-- Storage: S3 + RDBMS(MSSQL 가정)
+- Storage: S3 + RDBMS(현재 로컬/VM MariaDB 기준)
 - Security: JWT/2FA(계획)
 
 ### 구현 단계(현재 기준)
 1. 로컬 기능 단계: API/도메인/JPA(H2) 검증
 2. 인프라 단계: Kubernetes base 확장(Probe/HPA/Ingress/Secret)
-3. AWS 연동 단계: S3/Textract/Comprehend + MSSQL + EKS 배포
+3. AWS 연동 단계: S3/Textract/Comprehend + 운영 RDBMS + EKS 배포
 
 ## Architecture
 ### 핵심 컴포넌트
@@ -327,10 +327,85 @@ cd backend/services/notification && ./gradlew test
 - AlertRule
 - AlertEvent
 
+### ERD 다이어그램
+```mermaid
+erDiagram
+    APP_USERS ||--o{ DOCUMENTS : owns
+    APP_USERS ||--o{ ANALYSIS_JOBS : requests
+    APP_USERS ||--o{ NOTIFICATION_RULES : configures
+    APP_USERS ||--o{ NOTIFICATION_EVENTS : receives
+    DOCUMENTS ||--o{ ANALYSIS_JOBS : analyzed_by
+    DOCUMENTS ||--o{ NOTIFICATION_EVENTS : produces
+    ANALYSIS_JOBS ||--o{ KEYWORD_DETECTIONS : detects
+
+    APP_USERS {
+        string user_id PK
+        string email UK
+        string password_hash
+        string display_name
+        string role
+        datetime created_at
+    }
+
+    DOCUMENTS {
+        string id PK
+        string owner_user_id FK
+        string file_key
+        string filename
+        string status
+        string content_type
+        datetime created_at
+        datetime updated_at
+    }
+
+    ANALYSIS_JOBS {
+        string id PK
+        string owner_user_id FK
+        string document_id FK
+        string state
+        string analysis_provider
+        string result_summary
+        int risk_score
+        string keywords
+        string error_code
+        string error_message
+        datetime failed_at
+        datetime notification_dispatched_at
+        datetime created_at
+    }
+
+    KEYWORD_DETECTIONS {
+        string id PK
+        string analysis_job_id FK
+        string keyword
+        float confidence
+        datetime created_at
+    }
+
+    NOTIFICATION_RULES {
+        string id PK
+        string owner_user_id FK
+        string keyword
+        string channel
+        boolean enabled
+        datetime created_at
+    }
+
+    NOTIFICATION_EVENTS {
+        string id PK
+        string owner_user_id FK
+        string document_id FK
+        string channel
+        string message
+        string status
+        datetime created_at
+    }
+```
+
 ### 물리 스키마 초안 (기본 H2, 선택 VM MariaDB)
 - `app_users(user_id, email, password_hash, display_name, role, created_at)`
 - `documents(id, owner_user_id, file_key, filename, status, content_type, created_at, updated_at)`
-- `analysis_jobs(id, owner_user_id, document_id, state, analysis_provider, result_summary, risk_score, keywords, notification_dispatched_at, created_at)`
+- `analysis_jobs(id, owner_user_id, document_id, state, analysis_provider, result_summary, risk_score, keywords, error_code, error_message, failed_at, notification_dispatched_at, created_at)`
 - `keyword_detections(id, analysis_job_id, keyword, confidence, created_at)`
 - `notification_rules(id, owner_user_id, keyword, channel, enabled, created_at)`
 - `notification_events(id, owner_user_id, document_id, channel, message, status, created_at)`
@@ -343,6 +418,7 @@ cd backend/services/notification && ./gradlew test
 - 기본 실행은 H2 in-memory이며, `mariadb` 프로필에서는 VM MariaDB의 서비스별 DB를 사용
 - Gateway가 `X-SmartDoc-User-Id` 헤더를 downstream 서비스에 전달하고, 헤더가 없으면 로컬 기본값 `local-dev-user`를 사용
 - `analysis` 완료 시 키워드 감지 결과를 저장하고, enabled `notification_rules` 매칭 결과로 `notification_events`를 자동 생성
+- `analysis` 실패 시 `FAILED` 상태와 오류 정보를 저장하고 document 상태를 `ANALYSIS_FAILED`로 동기화
 - `analysis_jobs.notification_dispatched_at`으로 같은 Job의 자동 알림 판단 중복을 방지
 
 ### 인덱스 아이디어
@@ -377,6 +453,7 @@ cd backend/services/notification && ./gradlew test
 - 알림 규칙 화면에서 `GET /api/v1/notifications/rules`, `POST /api/v1/notifications/rules`로 규칙 관리
 - 상세 화면에서 `POST /api/v1/analysis/jobs`로 분석 실행
 - 상세 화면에서 text/plain 파일 내용 기반 `resultSummary`, `riskScore`, `keywords` 표시
+- 분석 실패 시 실패 카드와 재시도 버튼으로 같은 Job을 다시 `QUEUED` 상태부터 실행
 - 분석 완료 후 enabled 알림 규칙과 키워드가 매칭되면 Slack 알림 이벤트 자동 생성
 - 상세 화면에서 `POST /api/v1/notifications/dispatch`로 Slack 알림 이벤트 수동 생성도 가능
 - 상세 화면에서 `GET /api/v1/notifications/events` 결과 중 현재 문서 이벤트 표시

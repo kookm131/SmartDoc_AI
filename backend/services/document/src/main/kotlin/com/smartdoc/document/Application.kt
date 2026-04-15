@@ -370,7 +370,8 @@ class DocumentService(
             "RECEIVED",
             "ANALYSIS_QUEUED",
             "ANALYSIS_PROCESSING",
-            "ANALYSIS_COMPLETED"
+            "ANALYSIS_COMPLETED",
+            "ANALYSIS_FAILED"
         )
 
         private val ALLOWED_CONTENT_TYPES = setOf(

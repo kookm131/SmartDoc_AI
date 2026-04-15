@@ -43,6 +43,7 @@ export interface DocumentRecord {
 
 export interface AnalysisJobRecord {
   jobId: string;
+  ownerUserId: string;
   documentId: string;
   state: string;
   createdAt: string;
@@ -50,6 +51,9 @@ export interface AnalysisJobRecord {
   resultSummary?: string | null;
   riskScore?: number | null;
   keywords: string[];
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  failedAt?: string | null;
 }
 
 export interface NotificationEventRecord {

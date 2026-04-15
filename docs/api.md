@@ -14,6 +14,7 @@
 - `GET /api/v1/documents`
 - `POST /api/v1/analysis/jobs`
 - `GET /api/v1/analysis/jobs/{id}`
+- `POST /api/v1/analysis/jobs/{id}/retry`
 - `POST /api/v1/notifications/dispatch`
 - `GET /api/v1/notifications/events`
 - `GET /api/v1/notifications/events/{id}`
@@ -138,9 +139,9 @@ Auth v1은 별도 서비스 없이 Gateway 내부 H2(in-memory)에 사용자 정
 ```
 
 로컬 저장소:
-- 현재 `document` 서비스는 JPA + H2(in-memory)로 시작하며, 이후 MSSQL로 전환 예정
+- 현재 `document` 서비스는 기본 H2(in-memory) 또는 `mariadb` 프로필의 VM MariaDB로 `documents`를 저장합니다.
 - 로컬 프로필에서 업로드 파일은 `SMARTDOC_LOCAL_UPLOAD_DIR`에 저장하며 기본값은 `.smartdoc/uploads`
-- 문서 상태: `RECEIVED`, `ANALYSIS_QUEUED`, `ANALYSIS_PROCESSING`, `ANALYSIS_COMPLETED`
+- 문서 상태: `RECEIVED`, `ANALYSIS_QUEUED`, `ANALYSIS_PROCESSING`, `ANALYSIS_COMPLETED`, `ANALYSIS_FAILED`
 - 업로드 허용 content type: `application/pdf`, `text/plain`, `application/octet-stream`
 
 ### `POST /api/v1/documents` 실행 예시
@@ -260,12 +261,13 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 ## Analysis
 - `POST /api/v1/analysis/jobs`
 - `GET /api/v1/analysis/jobs/{id}`
+- `POST /api/v1/analysis/jobs/{id}/retry`
 
 로컬 저장소:
-- 현재 `analysis` 서비스는 JPA + H2(in-memory)로 `analysis_jobs`를 저장하며, 이후 MSSQL로 전환 예정
-- `analysis_jobs` 최소 필드: `id`, `owner_user_id`, `document_id`, `state`, `analysis_provider`, `result_summary`, `risk_score`, `keywords`, `notification_dispatched_at`, `created_at`
+- 현재 `analysis` 서비스는 기본 H2(in-memory) 또는 `mariadb` 프로필의 VM MariaDB로 `analysis_jobs`를 저장합니다.
+- `analysis_jobs` 최소 필드: `id`, `owner_user_id`, `document_id`, `state`, `analysis_provider`, `result_summary`, `risk_score`, `keywords`, `error_code`, `error_message`, `failed_at`, `notification_dispatched_at`, `created_at`
 - `keyword_detections` 최소 필드: `id`, `analysis_job_id`, `keyword`, `confidence`, `created_at`
-- 로컬 stub 상태 전이: `QUEUED` -> `PROCESSING` -> `COMPLETED`
+- 로컬 stub 상태 전이: `QUEUED` -> `PROCESSING` -> `COMPLETED` 또는 `FAILED`
 
 ### `POST /api/v1/analysis/jobs` 요청/응답 예시
 요청:
@@ -286,7 +288,10 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
   "analysisProvider": "local-stub",
   "resultSummary": null,
   "riskScore": null,
-  "keywords": []
+  "keywords": [],
+  "errorCode": null,
+  "errorMessage": null,
+  "failedAt": null
 }
 ```
 
@@ -296,7 +301,8 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 - 로컬 분석은 `text/plain` 문서의 업로드 내용을 읽어 `계약`, `검토`, `알림`, `긴급`, `위험`, `청구`, `개인정보` 키워드를 감지합니다.
 - PDF 등 텍스트를 읽을 수 없는 문서는 filename/fileKey 기반 메타데이터 fallback으로 분석합니다.
 - 분석 완료 시 키워드는 `keyword_detections`에 저장되며, 중복 조회해도 같은 Job/키워드는 다시 저장하지 않습니다.
-- `analysis` 상태 전이에 따라 `document` 상태도 `ANALYSIS_QUEUED`, `ANALYSIS_PROCESSING`, `ANALYSIS_COMPLETED`로 갱신합니다.
+- `analysis` 상태 전이에 따라 `document` 상태도 `ANALYSIS_QUEUED`, `ANALYSIS_PROCESSING`, `ANALYSIS_COMPLETED`, `ANALYSIS_FAILED`로 갱신합니다.
+- 로컬 분석에서 파일명/fileKey/텍스트 내용에 `분석실패`, `fail`, `analysis-fail`, `force-fail`이 포함되면 실패 검증용으로 `FAILED` 상태가 됩니다.
 - `analysis`가 `COMPLETED`로 전이되면 `notification` 서비스에 키워드/위험 점수를 전달해 자동 알림 판단을 요청합니다.
 - `analysis -> document` 호출은 기본 connect timeout `1000ms`, read timeout `2000ms`를 사용합니다.
 - `analysis -> notification` 호출은 기본 connect timeout `1000ms`, read timeout `2000ms`를 사용하며, 실패 시 분석 조회는 유지하고 다음 조회에서 재시도합니다.
@@ -312,7 +318,48 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
   "analysisProvider": "local-stub",
   "resultSummary": "로컬 분석이 완료되었습니다. 업로드된 텍스트 파일 내용 기준으로 계약, 검토, 알림, 긴급 키워드를 감지했습니다.",
   "riskScore": 98,
-  "keywords": ["계약", "검토", "알림", "긴급"]
+  "keywords": ["계약", "검토", "알림", "긴급"],
+  "errorCode": null,
+  "errorMessage": null,
+  "failedAt": null
+}
+```
+
+### 실패 응답 예시 (`GET /api/v1/analysis/jobs/{id}`)
+```json
+{
+  "jobId": "uuid",
+  "ownerUserId": "uuid",
+  "documentId": "uuid",
+  "state": "FAILED",
+  "createdAt": "2026-04-14T08:00:00Z",
+  "analysisProvider": "local-stub",
+  "resultSummary": null,
+  "riskScore": null,
+  "keywords": [],
+  "errorCode": "LOCAL_ANALYSIS_FAILED",
+  "errorMessage": "로컬 분석 실패 마커가 감지되었습니다.",
+  "failedAt": "2026-04-14T08:00:04Z"
+}
+```
+
+### `POST /api/v1/analysis/jobs/{id}/retry` 응답 예시 (`200 OK`)
+실패한 Job만 재시도할 수 있습니다. 같은 `jobId`를 다시 `QUEUED`로 돌리고 오류 필드를 초기화합니다.
+
+```json
+{
+  "jobId": "uuid",
+  "ownerUserId": "uuid",
+  "documentId": "uuid",
+  "state": "QUEUED",
+  "createdAt": "2026-04-14T08:01:00Z",
+  "analysisProvider": "local-stub",
+  "resultSummary": null,
+  "riskScore": null,
+  "keywords": [],
+  "errorCode": null,
+  "errorMessage": null,
+  "failedAt": null
 }
 ```
 
@@ -324,7 +371,7 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 - `POST /api/v1/notifications/rules`
 
 로컬 저장소:
-- 현재 `notification` 서비스는 JPA + H2(in-memory)로 `notification_events`를 저장하며, 이후 MSSQL로 전환 예정
+- 현재 `notification` 서비스는 기본 H2(in-memory) 또는 `mariadb` 프로필의 VM MariaDB로 `notification_events`, `notification_rules`를 저장합니다.
 - `notification_events` 최소 필드: `id`, `owner_user_id`, `document_id`, `channel`, `message`, `status`, `created_at`
 - `notification_rules` 최소 필드: `id`, `owner_user_id`, `keyword`, `channel`, `enabled`, `created_at`
 - 기본 로컬 규칙: `keyword=계약`, `channel=slack`, `enabled=true`

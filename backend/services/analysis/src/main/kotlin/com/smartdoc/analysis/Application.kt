@@ -63,7 +63,10 @@ data class AnalysisJobResponse(
     val analysisProvider: String,
     val resultSummary: String?,
     val riskScore: Int?,
-    val keywords: List<String>
+    val keywords: List<String>,
+    val errorCode: String?,
+    val errorMessage: String?,
+    val failedAt: Instant?
 )
 
 data class AiAnalysisCommand(
@@ -301,6 +304,7 @@ data class ApiErrorResponse(
 
 class ResourceNotFoundException(message: String) : RuntimeException(message)
 class ExternalServiceException(message: String) : RuntimeException(message)
+class LocalAnalysisFailedException(message: String) : RuntimeException(message)
 
 private const val SMARTDOC_USER_ID_HEADER = "X-SmartDoc-User-Id"
 private const val LOCAL_DEV_OWNER_USER_ID = "local-dev-user"
@@ -335,6 +339,15 @@ class AnalysisJobEntity(
 
     @Column(length = 512)
     var keywords: String = "",
+
+    @Column(name = "error_code", length = 64)
+    var errorCode: String? = null,
+
+    @Column(name = "error_message", length = 1024)
+    var errorMessage: String? = null,
+
+    @Column(name = "failed_at")
+    var failedAt: Instant? = null,
 
     @Column(name = "notification_dispatched_at")
     var notificationDispatchedAt: Instant? = null,
@@ -424,9 +437,34 @@ class AnalysisJobService(
             ?.let(::toResponse)
             ?: throw ResourceNotFoundException("analysis job not found: $jobId")
 
+    fun retry(jobId: String, ownerUserId: String): AnalysisJobResponse {
+        val found = analysisJobRepository.findByIdAndOwnerUserId(jobId, ownerUserId)
+            ?: throw ResourceNotFoundException("analysis job not found: $jobId")
+
+        require(found.state == "FAILED") { "only FAILED analysis jobs can be retried" }
+
+        keywordDetectionRepository.deleteAll(keywordDetectionRepository.findByAnalysisJobId(found.id))
+        found.state = "QUEUED"
+        found.createdAt = Instant.now()
+        found.resultSummary = null
+        found.riskScore = null
+        found.keywords = ""
+        found.errorCode = null
+        found.errorMessage = null
+        found.failedAt = null
+        found.notificationDispatchedAt = null
+
+        val saved = analysisJobRepository.save(found)
+        documentLookupPort.updateStatus(saved.documentId, toDocumentStatus(saved.state), saved.ownerUserId)
+        return toResponse(saved)
+    }
+
     private fun advanceLocalState(entity: AnalysisJobEntity): AnalysisJobEntity {
         if (entity.state == "COMPLETED") {
             return dispatchCompletionNotification(entity)
+        }
+        if (entity.state == "FAILED") {
+            return entity
         }
 
         val ageSeconds = Duration.between(entity.createdAt, Instant.now()).seconds
@@ -442,10 +480,24 @@ class AnalysisJobService(
 
         entity.state = nextState
         if (nextState == "COMPLETED") {
-            val result = analyzeDocument(entity.documentId, entity.ownerUserId)
-            entity.resultSummary = result.summary
-            entity.riskScore = result.riskScore
-            entity.keywords = result.keywords.joinToString(",")
+            try {
+                val result = analyzeDocument(entity.documentId, entity.ownerUserId)
+                entity.resultSummary = result.summary
+                entity.riskScore = result.riskScore
+                entity.keywords = result.keywords.joinToString(",")
+                entity.errorCode = null
+                entity.errorMessage = null
+                entity.failedAt = null
+            } catch (ex: LocalAnalysisFailedException) {
+                entity.state = "FAILED"
+                entity.resultSummary = null
+                entity.riskScore = null
+                entity.keywords = ""
+                entity.errorCode = "LOCAL_ANALYSIS_FAILED"
+                entity.errorMessage = ex.message ?: "local analysis failed"
+                entity.failedAt = Instant.now()
+                entity.notificationDispatchedAt = null
+            }
         }
         val saved = analysisJobRepository.save(entity)
         if (saved.state == "COMPLETED") {
@@ -498,6 +550,10 @@ class AnalysisJobService(
         val searchTarget = listOfNotNull(textContent, document.filename, document.fileKey)
             .joinToString(" ")
             .lowercase()
+        if (LOCAL_FAILURE_MARKERS.any { marker -> searchTarget.contains(marker) }) {
+            throw LocalAnalysisFailedException("로컬 분석 실패 마커가 감지되었습니다.")
+        }
+
         val detectedKeywords = LOCAL_KEYWORD_RULES
             .filter { rule -> rule.aliases.any { alias -> searchTarget.contains(alias.lowercase()) } }
             .map { it.keyword }
@@ -536,6 +592,7 @@ class AnalysisJobService(
             "QUEUED" -> "ANALYSIS_QUEUED"
             "PROCESSING" -> "ANALYSIS_PROCESSING"
             "COMPLETED" -> "ANALYSIS_COMPLETED"
+            "FAILED" -> "ANALYSIS_FAILED"
             else -> "ANALYSIS_QUEUED"
         }
 
@@ -549,7 +606,10 @@ class AnalysisJobService(
             analysisProvider = entity.analysisProvider,
             resultSummary = entity.resultSummary,
             riskScore = entity.riskScore,
-            keywords = keywordsFor(entity)
+            keywords = keywordsFor(entity),
+            errorCode = entity.errorCode,
+            errorMessage = entity.errorMessage,
+            failedAt = entity.failedAt
         )
 
     private data class LocalKeywordRule(
@@ -573,6 +633,7 @@ class AnalysisJobService(
             LocalKeywordRule("청구", listOf("청구", "invoice", "billing")),
             LocalKeywordRule("개인정보", listOf("개인정보", "privacy", "personal"))
         )
+        val LOCAL_FAILURE_MARKERS = listOf("분석실패", "fail", "analysis-fail", "force-fail")
     }
 }
 
@@ -595,6 +656,12 @@ class AnalysisController(
     fun getJob(@PathVariable id: String, servletRequest: HttpServletRequest): AnalysisJobResponse {
         require(id.isNotBlank()) { "id must not be blank" }
         return analysisJobService.get(id, ownerUserIdFrom(servletRequest))
+    }
+
+    @PostMapping("/{id}/retry")
+    fun retryJob(@PathVariable id: String, servletRequest: HttpServletRequest): AnalysisJobResponse {
+        require(id.isNotBlank()) { "id must not be blank" }
+        return analysisJobService.retry(id, ownerUserIdFrom(servletRequest))
     }
 }
 

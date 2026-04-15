@@ -22,6 +22,8 @@
 6. Analysis가 같은 owner의 document 로컬 텍스트 내용을 조회해 키워드 감지 결과를 저장
 7. Analysis가 notification으로 owner/키워드/위험 점수를 전달
 8. Notification이 같은 owner의 enabled rule과 키워드를 매칭해 알림 이벤트 저장
+9. Analysis 실패 시 Job을 `FAILED`로 저장하고 document 상태를 `ANALYSIS_FAILED`로 동기화
+10. 사용자가 재시도하면 Gateway를 통해 같은 Job이 `QUEUED`로 초기화되고 다시 상태 전이를 시작
 
 ## 현재 단계와 연동 계획
 - 현재: 로컬 개발 단계(H2 또는 VM MariaDB/JPA, Gateway Auth v1, 로컬 파일 업로드, 실제 Docker 이미지, Kubernetes base 매니페스트)
@@ -30,6 +32,7 @@
 - document/analysis/notification 데이터는 `owner_user_id`로 분리됩니다.
 - Gateway를 거치지 않고 서비스를 직접 호출하면 로컬 개발 기본 owner인 `local-dev-user`가 사용됩니다.
 - 기본 프로필은 H2 in-memory이며, `SPRING_PROFILES_ACTIVE=mariadb`로 VM MariaDB를 사용할 수 있습니다.
+- 로컬 실패 검증은 파일명/fileKey/텍스트에 `분석실패`, `fail`, `analysis-fail`, `force-fail`을 포함해 수행합니다.
 - 로컬 컨테이너 검증:
   - Docker Compose: `infra/docker/docker-compose.yml`
   - Kubernetes: `smartdoc/*:local` 이미지를 kind/minikube에 로드 후 `infra/k8s/base` 적용

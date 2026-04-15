@@ -15,10 +15,10 @@
 - Backend: Spring Boot 3.x, Kotlin, Java 17
 - Frontend: React, Vite
 - Infra: EKS(Kubernetes), ALB, CloudWatch
-- Storage: S3 + RDBMS(MSSQL 가정)
+- Storage: S3 + RDBMS(현재 로컬/VM MariaDB 기준)
 - Security: JWT/2FA(계획)
 
 ## 구현 단계(현재 기준)
 1. 로컬 기능 단계: API/도메인/JPA(H2) 검증
 2. 인프라 단계: Kubernetes base 확장(Probe/HPA/Ingress/Secret)
-3. AWS 연동 단계: S3/Textract/Comprehend + MSSQL + EKS 배포
+3. AWS 연동 단계: S3/Textract/Comprehend + 운영 RDBMS + EKS 배포

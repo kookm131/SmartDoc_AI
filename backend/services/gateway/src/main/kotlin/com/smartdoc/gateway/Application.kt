@@ -282,6 +282,10 @@ class AnalysisProxyController(
     @GetMapping("/{id}")
     fun getJob(@PathVariable id: String, request: HttpServletRequest): ResponseEntity<String> =
         gatewayProxy.getAnalysis("/api/v1/analysis/jobs/$id", request)
+
+    @PostMapping("/{id}/retry")
+    fun retryJob(@PathVariable id: String, request: HttpServletRequest): ResponseEntity<String> =
+        gatewayProxy.postAnalysis("/api/v1/analysis/jobs/$id/retry", "{}", request)
 }
 
 @RestController

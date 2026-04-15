@@ -172,6 +172,13 @@ export async function getAnalysisJob(jobId: string): Promise<AnalysisJobRecord> 
   return request<AnalysisJobRecord>(`${GATEWAY_API_BASE}/analysis/jobs/${jobId}`);
 }
 
+export async function retryAnalysisJob(jobId: string): Promise<AnalysisJobRecord> {
+  return request<AnalysisJobRecord>(`${GATEWAY_API_BASE}/analysis/jobs/${jobId}/retry`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
 export async function dispatchNotification(input: NotificationDispatchInput): Promise<NotificationEventRecord> {
   return request<NotificationEventRecord>(`${GATEWAY_API_BASE}/notifications/dispatch`, {
     method: 'POST',

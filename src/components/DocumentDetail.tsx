@@ -10,6 +10,8 @@ import {
   Lightbulb,
   MessageSquare,
   LoaderCircle,
+  AlertTriangle,
+  RotateCcw,
 } from 'lucide-react';
 import { motion } from 'motion/react';
 import { AnalysisJobRecord, ApiErrorResponse, DocumentRecord, NotificationEventRecord } from '../types';
@@ -18,6 +20,7 @@ interface DocumentDetailProps {
   document: DocumentRecord;
   onBack: () => void;
   onAnalyze: (documentId: string) => Promise<void>;
+  onRetryAnalysis: (jobId: string) => Promise<void>;
   analysisJob: AnalysisJobRecord | null;
   polling: boolean;
   notificationEvents: NotificationEventRecord[];
@@ -32,6 +35,7 @@ export default function DocumentDetail({
   document,
   onBack,
   onAnalyze,
+  onRetryAnalysis,
   analysisJob,
   polling,
   notificationEvents,
@@ -131,6 +135,12 @@ export default function DocumentDetail({
                 <MetaRow label="state" value={analysisJob?.state || 'NOT_STARTED'} />
                 <MetaRow label="createdAt" value={analysisJob ? new Date(analysisJob.createdAt).toLocaleString('ko-KR') : '-'} />
                 <MetaRow label="analysisProvider" value={analysisJob?.analysisProvider || '-'} />
+                {analysisJob?.state === 'FAILED' && (
+                  <>
+                    <MetaRow label="errorCode" value={analysisJob.errorCode || '-'} />
+                    <MetaRow label="failedAt" value={analysisJob.failedAt ? new Date(analysisJob.failedAt).toLocaleString('ko-KR') : '-'} />
+                  </>
+                )}
               </div>
             </div>
 
@@ -140,6 +150,28 @@ export default function DocumentDetail({
                 <h3 className="font-bold text-sm text-on-surface">분석 결과</h3>
               </div>
               <div className="bg-surface-container-low p-4 rounded-xl border border-outline-variant/5 space-y-4">
+                {analysisJob?.state === 'FAILED' && (
+                  <div className="rounded-xl border border-error/20 bg-error/5 p-4">
+                    <div className="flex items-start gap-3">
+                      <AlertTriangle className="mt-0.5 h-5 w-5 text-error" />
+                      <div className="min-w-0 flex-1">
+                        <p className="text-sm font-bold text-error">분석 실패</p>
+                        <p className="mt-1 text-xs leading-relaxed text-on-surface-variant">
+                          {analysisJob.errorMessage || '분석 중 오류가 발생했습니다. 재시도 버튼으로 같은 문서를 다시 분석할 수 있습니다.'}
+                        </p>
+                        <p className="mt-2 text-[11px] text-on-surface-variant">code: {analysisJob.errorCode || 'UNKNOWN'}</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={() => void onRetryAnalysis(analysisJob.jobId)}
+                      disabled={polling}
+                      className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-error px-3 py-2 text-xs font-bold text-white transition-all hover:opacity-90 disabled:opacity-60"
+                    >
+                      {polling ? <LoaderCircle className="h-4 w-4 animate-spin" /> : <RotateCcw className="h-4 w-4" />}
+                      실패한 분석 재시도
+                    </button>
+                  </div>
+                )}
                 <div>
                   <p className="text-xs text-on-surface-variant mb-2">현재 상태</p>
                   <p className="text-sm font-bold text-primary">{analysisJob?.state || '대기'}</p>

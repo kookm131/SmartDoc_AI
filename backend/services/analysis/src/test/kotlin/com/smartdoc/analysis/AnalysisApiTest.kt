@@ -2,6 +2,7 @@ package com.smartdoc.analysis
 
 import org.hamcrest.Matchers.blankOrNullString
 import org.hamcrest.Matchers.not
+import org.hamcrest.Matchers.nullValue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
 import org.mockito.Mockito.atLeastOnce
@@ -133,6 +134,96 @@ class AnalysisApiTest {
             listOf("계약", "검토", "알림", "긴급"),
             98
         )
+    }
+
+    @Test
+    fun `marks local analysis failure and retries failed job`() {
+        val documentId = "44444444-4444-4444-4444-444444444444"
+        `when`(documentLookupPort.exists(documentId, "local-dev-user")).thenReturn(true)
+        `when`(documentLookupPort.get(documentId, "local-dev-user")).thenReturn(
+            DocumentInfo(
+                documentId = documentId,
+                filename = "analysis-fail.txt",
+                fileKey = "uploads/analysis-fail.txt",
+                contentType = "text/plain"
+            ),
+            DocumentInfo(
+                documentId = documentId,
+                filename = "contract-review.txt",
+                fileKey = "uploads/contract-review.txt",
+                contentType = "text/plain"
+            )
+        )
+        `when`(documentLookupPort.readTextContent(documentId, "local-dev-user")).thenReturn(
+            "분석실패",
+            "긴급 계약 검토 문서입니다."
+        )
+        `when`(aiAnalysisPort.submit(AiAnalysisCommand(documentId))).thenReturn(
+            AiAnalysisResult(state = "QUEUED", provider = "local-stub")
+        )
+        `when`(
+            notificationDispatchPort.dispatchAnalysisCompleted(
+                documentId,
+                "local-dev-user",
+                listOf("계약", "검토", "긴급"),
+                86
+            )
+        ).thenReturn(true)
+
+        val created = mockMvc.perform(
+            post("/api/v1/analysis/jobs")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"documentId":"$documentId"}""")
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.state").value("QUEUED"))
+            .andReturn()
+
+        val jobId = Regex(""""jobId":"([^"]+)"""")
+            .find(created.response.contentAsString)
+            ?.groupValues
+            ?.get(1)
+            ?: error("jobId not found")
+
+        analysisJobRepository.findById(jobId).get().also {
+            it.createdAt = Instant.now().minusSeconds(4)
+            analysisJobRepository.save(it)
+        }
+
+        mockMvc.perform(get("/api/v1/analysis/jobs/$jobId"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.state").value("FAILED"))
+            .andExpect(jsonPath("$.errorCode").value("LOCAL_ANALYSIS_FAILED"))
+            .andExpect(jsonPath("$.errorMessage").value("로컬 분석 실패 마커가 감지되었습니다."))
+            .andExpect(jsonPath("$.failedAt").value(not(blankOrNullString())))
+
+        check(keywordDetectionRepository.findByAnalysisJobId(jobId).isEmpty()) {
+            "failed analysis should not save keyword detections"
+        }
+        verify(documentLookupPort, atLeastOnce()).updateStatus(documentId, "ANALYSIS_FAILED", "local-dev-user")
+
+        mockMvc.perform(post("/api/v1/analysis/jobs/$jobId/retry"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.state").value("QUEUED"))
+            .andExpect(jsonPath("$.errorCode").value(nullValue()))
+            .andExpect(jsonPath("$.failedAt").value(nullValue()))
+
+        analysisJobRepository.findById(jobId).get().also {
+            it.createdAt = Instant.now().minusSeconds(4)
+            analysisJobRepository.save(it)
+        }
+
+        mockMvc.perform(get("/api/v1/analysis/jobs/$jobId"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.state").value("COMPLETED"))
+            .andExpect(jsonPath("$.riskScore").value(86))
+            .andExpect(jsonPath("$.keywords[0]").value("계약"))
+
+        check(keywordDetectionRepository.findByAnalysisJobId(jobId).size == 3) {
+            "retried analysis should save successful keyword detections"
+        }
+        verify(documentLookupPort, atLeastOnce()).updateStatus(documentId, "ANALYSIS_QUEUED", "local-dev-user")
+        verify(documentLookupPort, atLeastOnce()).updateStatus(documentId, "ANALYSIS_COMPLETED", "local-dev-user")
     }
 
     @Test
