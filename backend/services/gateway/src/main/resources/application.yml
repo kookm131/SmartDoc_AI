@@ -46,3 +46,22 @@ management:
     web:
       exposure:
         include: health,info
+
+---
+spring:
+  config:
+    activate:
+      on-profile: mariadb
+  datasource:
+    url: ${SMARTDOC_GATEWAY_DATASOURCE_URL:jdbc:mariadb://${SMARTDOC_DB_HOST:localhost}:${SMARTDOC_DB_PORT:3306}/smartdoc_gateway?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Seoul}
+    username: ${SMARTDOC_DB_USERNAME:smartdoc}
+    password: ${SMARTDOC_DB_PASSWORD:}
+    driver-class-name: org.mariadb.jdbc.Driver
+  jpa:
+    database-platform: org.hibernate.dialect.MariaDBDialect
+    hibernate:
+      ddl-auto: update
+    properties:
+      hibernate:
+        format_sql: true
+    show-sql: false

@@ -24,16 +24,16 @@
 8. Notification이 같은 owner의 enabled rule과 키워드를 매칭해 알림 이벤트 저장
 
 ## 현재 단계와 연동 계획
-- 현재: 로컬 개발 단계(H2/JPA, Gateway Auth v1, 로컬 파일 업로드, 실제 Docker 이미지, Kubernetes base 매니페스트)
-- Gateway Auth v1은 별도 인증 서비스를 띄우지 않고 Gateway 내부 H2에 `app_users`를 저장합니다.
+- 현재: 로컬 개발 단계(H2 또는 VM MariaDB/JPA, Gateway Auth v1, 로컬 파일 업로드, 실제 Docker 이미지, Kubernetes base 매니페스트)
+- Gateway Auth v1은 별도 인증 서비스를 띄우지 않고 Gateway DB에 `app_users`를 저장합니다.
 - 로컬 기본 계정은 `test@smartdoc.local` / `password`이며, 재시작 시 seed로 자동 생성됩니다.
 - document/analysis/notification 데이터는 `owner_user_id`로 분리됩니다.
 - Gateway를 거치지 않고 서비스를 직접 호출하면 로컬 개발 기본 owner인 `local-dev-user`가 사용됩니다.
-- DB는 당분간 H2 in-memory를 유지하며, 운영 DB 전환은 AWS 연동 후반부로 보류
+- 기본 프로필은 H2 in-memory이며, `SPRING_PROFILES_ACTIVE=mariadb`로 VM MariaDB를 사용할 수 있습니다.
 - 로컬 컨테이너 검증:
   - Docker Compose: `infra/docker/docker-compose.yml`
   - Kubernetes: `smartdoc/*:local` 이미지를 kind/minikube에 로드 후 `infra/k8s/base` 적용
 - 다음: AWS/EKS 연동
-  - 필요 시 후반부에 RDBMS를 MSSQL(RDS 등)로 전환
+  - 필요 시 후반부에 RDBMS를 AWS RDS 등으로 전환
   - S3/Textract/Comprehend 연동 어댑터 추가
   - EKS 배포(Deployment/Service + Ingress/Secret/ConfigMap)로 운영 경로 전환

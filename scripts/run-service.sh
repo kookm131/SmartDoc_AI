@@ -16,6 +16,15 @@ if [[ ! -d "$SERVICE_DIR" ]]; then
   exit 1
 fi
 
+for env_file in "$ROOT_DIR/.env" "$ROOT_DIR/.env.local"; do
+  if [[ -f "$env_file" ]]; then
+    set -a
+    # shellcheck disable=SC1090
+    source "$env_file"
+    set +a
+  fi
+done
+
 export JAVA_TOOL_OPTIONS="${JAVA_TOOL_OPTIONS:--Xms128m -Xmx384m}"
 export GRADLE_OPTS="${GRADLE_OPTS:--Dorg.gradle.jvmargs=-Xmx384m -Dorg.gradle.daemon=false}"
 export GRADLE_USER_HOME="${GRADLE_USER_HOME:-$ROOT_DIR/.gradle-local}"
