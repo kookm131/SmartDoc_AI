@@ -141,8 +141,12 @@ Auth v1은 별도 서비스 없이 Gateway 내부 H2(in-memory)에 사용자 정
 로컬 저장소:
 - 현재 `document` 서비스는 기본 H2(in-memory) 또는 `mariadb` 프로필의 VM MariaDB로 `documents`를 저장합니다.
 - 로컬 프로필에서 업로드 파일은 `SMARTDOC_LOCAL_UPLOAD_DIR`에 저장하며 기본값은 `.smartdoc/uploads`
+- 업로드 최대 크기는 `SMARTDOC_MAX_UPLOAD_BYTES`로 조정하며 기본값은 `10485760` bytes(10MiB)입니다.
 - 문서 상태: `RECEIVED`, `ANALYSIS_QUEUED`, `ANALYSIS_PROCESSING`, `ANALYSIS_COMPLETED`, `ANALYSIS_FAILED`
-- 업로드 허용 content type: `application/pdf`, `text/plain`, `application/octet-stream`
+- 업로드 허용 확장자/content type 조합:
+  - `.pdf`: `application/pdf`
+  - `.txt`: `text/plain`
+  - `.bin`: `application/octet-stream`
 
 ### `POST /api/v1/documents` 실행 예시
 ```bash
@@ -189,6 +193,28 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
   "path": "/api/v1/documents",
   "code": "VALIDATION_ERROR",
   "message": "filename must not be blank",
+  "traceId": "trace-id"
+}
+```
+
+파일 크기 초과 시에도 동일한 `VALIDATION_ERROR` 형식으로 반환합니다.
+```json
+{
+  "timestamp": "2026-04-13T12:00:00Z",
+  "path": "/api/v1/documents/upload",
+  "code": "VALIDATION_ERROR",
+  "message": "file size must be less than or equal to 10485760 bytes",
+  "traceId": "trace-id"
+}
+```
+
+허용되지 않은 확장자나 확장자와 맞지 않는 content type도 `VALIDATION_ERROR`로 반환합니다.
+```json
+{
+  "timestamp": "2026-04-13T12:00:00Z",
+  "path": "/api/v1/documents/upload",
+  "code": "VALIDATION_ERROR",
+  "message": "unsupported contentType text/plain for .pdf file",
   "traceId": "trace-id"
 }
 ```

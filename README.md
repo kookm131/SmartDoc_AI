@@ -242,6 +242,9 @@ scripts/smoke-gateway.sh
 로컬 파일 업로드:
 - 기본 저장 위치: `.smartdoc/uploads`
 - 변경 환경변수: `SMARTDOC_LOCAL_UPLOAD_DIR`
+- 최대 업로드 크기: 기본 `10485760` bytes(10MiB)
+- 크기 변경 환경변수: `SMARTDOC_MAX_UPLOAD_BYTES`
+- 허용 확장자/content type: `.pdf`/`application/pdf`, `.txt`/`text/plain`, `.bin`/`application/octet-stream`
 - `.smartdoc/`는 git에 올리지 않습니다.
 
 ### 인프라 템플릿

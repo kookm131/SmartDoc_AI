@@ -20,7 +20,12 @@ import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import java.nio.file.Files
 import java.nio.file.Path
 
-@SpringBootTest(properties = ["smartdoc.local-upload-dir=/tmp/smartdoc-document-test-uploads"])
+@SpringBootTest(
+    properties = [
+        "smartdoc.local-upload-dir=/tmp/smartdoc-document-test-uploads",
+        "smartdoc.max-upload-bytes=64"
+    ]
+)
 @AutoConfigureMockMvc
 class DocumentApiTest {
     @Autowired
@@ -197,5 +202,50 @@ class DocumentApiTest {
         mockMvc.perform(multipart("/api/v1/documents/upload").file(file))
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+    }
+
+    @Test
+    fun `returns validation error for oversized upload`() {
+        val file = MockMultipartFile(
+            "file",
+            "large.txt",
+            "text/plain",
+            ByteArray(65) { 'x'.code.toByte() }
+        )
+
+        mockMvc.perform(multipart("/api/v1/documents/upload").file(file))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.message").value("file size must be less than or equal to 64 bytes"))
+    }
+
+    @Test
+    fun `returns validation error for unsupported upload extension`() {
+        val file = MockMultipartFile(
+            "file",
+            "script.exe",
+            "application/octet-stream",
+            "binary".toByteArray()
+        )
+
+        mockMvc.perform(multipart("/api/v1/documents/upload").file(file))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.message").value("unsupported file extension: .exe"))
+    }
+
+    @Test
+    fun `returns validation error for mismatched content type`() {
+        val file = MockMultipartFile(
+            "file",
+            "contract.pdf",
+            "text/plain",
+            "not actually a pdf".toByteArray()
+        )
+
+        mockMvc.perform(multipart("/api/v1/documents/upload").file(file))
+            .andExpect(status().isBadRequest)
+            .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
+            .andExpect(jsonPath("$.message").value("unsupported contentType text/plain for .pdf file"))
     }
 }

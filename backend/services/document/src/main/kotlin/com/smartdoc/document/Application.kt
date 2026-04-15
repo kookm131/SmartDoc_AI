@@ -265,7 +265,9 @@ interface DocumentRepository : JpaRepository<DocumentEntity, String> {
 @Service
 class DocumentService(
     private val documentRepository: DocumentRepository,
-    private val objectStoragePort: ObjectStoragePort
+    private val objectStoragePort: ObjectStoragePort,
+    @Value("\${smartdoc.max-upload-bytes:10485760}")
+    private val maxUploadBytes: Long
 ) {
     fun create(request: DocumentCreateRequest, ownerUserId: String): DocumentCreateResponse {
         val stored = objectStoragePort.store(
@@ -295,7 +297,10 @@ class DocumentService(
 
         require(filename.isNotBlank()) { "filename must not be blank" }
         require(!file.isEmpty) { "file must not be empty" }
-        require(contentType in ALLOWED_CONTENT_TYPES) { "unsupported contentType: $contentType" }
+        require(file.size <= maxUploadBytes) {
+            "file size must be less than or equal to $maxUploadBytes bytes"
+        }
+        validateUploadType(filename, contentType)
 
         val stored = objectStoragePort.storeFile(
             ObjectFileStoreCommand(
@@ -365,6 +370,20 @@ class DocumentService(
             updatedAt = entity.updatedAt
         )
 
+    private fun validateUploadType(filename: String, contentType: String) {
+        val extension = filename.substringAfterLast('.', missingDelimiterValue = "")
+            .lowercase()
+            .trim()
+        require(extension.isNotBlank()) { "file extension is required" }
+
+        val allowedContentTypes = ALLOWED_UPLOAD_TYPES[extension]
+            ?: throw IllegalArgumentException("unsupported file extension: .$extension")
+
+        require(contentType in allowedContentTypes) {
+            "unsupported contentType $contentType for .$extension file"
+        }
+    }
+
     companion object {
         private val ALLOWED_STATUSES = setOf(
             "RECEIVED",
@@ -374,10 +393,10 @@ class DocumentService(
             "ANALYSIS_FAILED"
         )
 
-        private val ALLOWED_CONTENT_TYPES = setOf(
-            "application/pdf",
-            "text/plain",
-            "application/octet-stream"
+        private val ALLOWED_UPLOAD_TYPES = mapOf(
+            "pdf" to setOf("application/pdf"),
+            "txt" to setOf("text/plain"),
+            "bin" to setOf("application/octet-stream")
         )
     }
 }

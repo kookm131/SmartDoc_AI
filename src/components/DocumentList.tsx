@@ -82,7 +82,7 @@ export default function DocumentList({
           <form className="grid grid-cols-1 md:grid-cols-5 gap-3" onSubmit={handleSubmit}>
             <input
               type="file"
-              accept=".pdf,.txt,application/pdf,text/plain,application/octet-stream"
+              accept=".pdf,.txt,.bin,application/pdf,text/plain,application/octet-stream"
               onChange={(event) => {
                 const file = event.target.files?.[0] ?? null;
                 setSelectedFile(file);
