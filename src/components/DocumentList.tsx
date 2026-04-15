@@ -8,6 +8,7 @@ import {
   ChevronRight,
   ChevronsLeft,
   ChevronsRight,
+  Archive,
 } from 'lucide-react';
 import { ApiErrorResponse, DocumentCreateInput, DocumentRecord } from '../types';
 
@@ -17,6 +18,7 @@ interface DocumentListProps {
   submitting: boolean;
   onDocumentClick: (doc: DocumentRecord) => void;
   onCreateDocument: (input: DocumentCreateInput) => Promise<void>;
+  onArchiveDocument: (documentId: string) => Promise<void>;
   latestError: ApiErrorResponse | null;
 }
 
@@ -26,6 +28,7 @@ export default function DocumentList({
   submitting,
   onDocumentClick,
   onCreateDocument,
+  onArchiveDocument,
   latestError,
 }: DocumentListProps) {
   const [showCreateForm, setShowCreateForm] = useState(false);
@@ -203,8 +206,20 @@ export default function DocumentList({
                   <span className="px-3 py-1 text-[11px] font-bold rounded-full bg-primary/10 text-primary">{doc.status}</span>
                 </div>
                 <div className="px-4 text-sm text-on-surface-variant">{new Date(doc.createdAt).toLocaleString('ko-KR')}</div>
-                <div className="px-4 flex justify-center">
-                  <button className="px-3 py-1 text-xs rounded-lg border border-outline-variant/20">상세 보기</button>
+                <div className="px-4 flex justify-center gap-2" onClick={(event) => event.stopPropagation()}>
+                  <button
+                    onClick={() => onDocumentClick(doc)}
+                    className="px-3 py-1 text-xs rounded-lg border border-outline-variant/20"
+                  >
+                    상세 보기
+                  </button>
+                  <button
+                    onClick={() => void onArchiveDocument(doc.documentId)}
+                    className="inline-flex items-center gap-1 px-3 py-1 text-xs rounded-lg border border-outline-variant/20 text-on-surface-variant hover:bg-error/5 hover:text-error"
+                  >
+                    <Archive className="h-3.5 w-3.5" />
+                    보관
+                  </button>
                 </div>
               </div>
             ))}

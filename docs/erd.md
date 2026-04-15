@@ -36,6 +36,7 @@ erDiagram
         string content_type
         datetime created_at
         datetime updated_at
+        datetime archived_at
     }
 
     ANALYSIS_JOBS {
@@ -84,7 +85,7 @@ erDiagram
 
 ## 물리 스키마 초안 (기본 H2, 선택 VM MariaDB)
 - `app_users(user_id, email, password_hash, display_name, role, created_at)`
-- `documents(id, owner_user_id, file_key, filename, status, content_type, created_at, updated_at)`
+- `documents(id, owner_user_id, file_key, filename, status, content_type, created_at, updated_at, archived_at)`
 - `analysis_jobs(id, owner_user_id, document_id, state, analysis_provider, result_summary, risk_score, keywords, error_code, error_message, failed_at, notification_dispatched_at, created_at)`
 - `keyword_detections(id, analysis_job_id, keyword, confidence, created_at)`
 - `notification_rules(id, owner_user_id, keyword, channel, enabled, created_at)`
@@ -97,6 +98,7 @@ erDiagram
 - `notification`: JPA로 `owner_user_id` 기준 `notification_events`, `notification_rules` 저장/조회
 - 기본 실행은 H2 in-memory이며, `mariadb` 프로필에서는 VM MariaDB의 서비스별 DB를 사용
 - Gateway가 `X-SmartDoc-User-Id` 헤더를 downstream 서비스에 전달하고, 헤더가 없으면 로컬 기본값 `local-dev-user`를 사용
+- 문서 삭제는 hard delete 대신 `documents.status=ARCHIVED`, `archived_at` 기록으로 보관 처리
 - `analysis` 완료 시 키워드 감지 결과를 저장하고, enabled `notification_rules` 매칭 결과로 `notification_events`를 자동 생성
 - `analysis` 실패 시 `analysis_jobs.state=FAILED`, `error_code`, `error_message`, `failed_at`을 저장하고 document 상태를 `ANALYSIS_FAILED`로 동기화
 - 실패한 Job은 재시도 API로 같은 `id`를 유지한 채 `QUEUED`로 초기화할 수 있음

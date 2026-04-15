@@ -12,6 +12,8 @@
 - `GET /api/v1/documents/{id}`
 - `GET /api/v1/documents/{id}/content`
 - `GET /api/v1/documents`
+- `GET /api/v1/documents/archived`
+- `POST /api/v1/documents/{id}/archive`
 - `POST /api/v1/analysis/jobs`
 - `GET /api/v1/analysis/jobs/{id}`
 - `POST /api/v1/analysis/jobs/{id}/retry`
@@ -111,6 +113,8 @@ Auth v1은 별도 서비스 없이 Gateway 내부 H2(in-memory)에 사용자 정
 - `GET /api/v1/documents/{id}`
 - `GET /api/v1/documents/{id}/content`
 - `GET /api/v1/documents`
+- `GET /api/v1/documents/archived`
+- `POST /api/v1/documents/{id}/archive`
 - `PATCH /api/v1/documents/{id}/status`
 - `POST /api/v1/documents/{id}/status` (서비스 간 내부 호출 호환용)
 
@@ -134,7 +138,8 @@ Auth v1은 별도 서비스 없이 Gateway 내부 H2(in-memory)에 사용자 정
   "contentType": "application/pdf",
   "status": "RECEIVED",
   "createdAt": "2026-04-13T07:00:00Z",
-  "updatedAt": "2026-04-13T07:00:00Z"
+  "updatedAt": "2026-04-13T07:00:00Z",
+  "archivedAt": null
 }
 ```
 
@@ -142,7 +147,8 @@ Auth v1은 별도 서비스 없이 Gateway 내부 H2(in-memory)에 사용자 정
 - 현재 `document` 서비스는 기본 H2(in-memory) 또는 `mariadb` 프로필의 VM MariaDB로 `documents`를 저장합니다.
 - 로컬 프로필에서 업로드 파일은 `SMARTDOC_LOCAL_UPLOAD_DIR`에 저장하며 기본값은 `.smartdoc/uploads`
 - 업로드 최대 크기는 `SMARTDOC_MAX_UPLOAD_BYTES`로 조정하며 기본값은 `10485760` bytes(10MiB)입니다.
-- 문서 상태: `RECEIVED`, `ANALYSIS_QUEUED`, `ANALYSIS_PROCESSING`, `ANALYSIS_COMPLETED`, `ANALYSIS_FAILED`
+- 문서 상태: `RECEIVED`, `ANALYSIS_QUEUED`, `ANALYSIS_PROCESSING`, `ANALYSIS_COMPLETED`, `ANALYSIS_FAILED`, `ARCHIVED`
+- 문서 삭제는 hard delete 대신 보관 처리(`ARCHIVED`)로 수행하며, 기본 목록 `GET /api/v1/documents`에서는 보관 문서를 제외합니다.
 - 업로드 허용 확장자/content type 조합:
   - `.pdf`: `application/pdf`
   - `.txt`: `text/plain`
@@ -182,7 +188,8 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
   "contentType": "application/pdf",
   "status": "RECEIVED",
   "createdAt": "2026-04-14T09:00:00Z",
-  "updatedAt": "2026-04-14T09:00:00Z"
+  "updatedAt": "2026-04-14T09:00:00Z",
+  "archivedAt": null
 }
 ```
 
@@ -229,7 +236,8 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
   "contentType": "application/pdf",
   "status": "RECEIVED",
   "createdAt": "2026-04-13T07:00:00Z",
-  "updatedAt": "2026-04-13T07:00:00Z"
+  "updatedAt": "2026-04-13T07:00:00Z",
+  "archivedAt": null
 }
 ```
 
@@ -257,9 +265,44 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
     "contentType": "application/pdf",
     "status": "RECEIVED",
     "createdAt": "2026-04-13T07:00:00Z",
-    "updatedAt": "2026-04-13T07:00:00Z"
+    "updatedAt": "2026-04-13T07:00:00Z",
+    "archivedAt": null
   }
 ]
+```
+
+### `GET /api/v1/documents/archived` 응답 예시 (`200 OK`)
+보관 처리된 문서만 반환합니다.
+```json
+[
+  {
+    "documentId": "uuid",
+    "ownerUserId": "uuid",
+    "filename": "invoice-2026-04.pdf",
+    "fileKey": "uploads/invoice-2026-04.pdf",
+    "contentType": "application/pdf",
+    "status": "ARCHIVED",
+    "createdAt": "2026-04-13T07:00:00Z",
+    "updatedAt": "2026-04-14T08:00:05Z",
+    "archivedAt": "2026-04-14T08:00:05Z"
+  }
+]
+```
+
+### `POST /api/v1/documents/{id}/archive` 응답 예시 (`200 OK`)
+문서 row와 원본 파일은 삭제하지 않고 `ARCHIVED` 상태로 전환합니다.
+```json
+{
+  "documentId": "uuid",
+  "ownerUserId": "uuid",
+  "filename": "invoice-2026-04.pdf",
+  "fileKey": "uploads/invoice-2026-04.pdf",
+  "contentType": "application/pdf",
+  "status": "ARCHIVED",
+  "createdAt": "2026-04-13T07:00:00Z",
+  "updatedAt": "2026-04-14T08:00:05Z",
+  "archivedAt": "2026-04-14T08:00:05Z"
+}
 ```
 
 ### `PATCH /api/v1/documents/{id}/status` 요청/응답 예시
@@ -280,7 +323,8 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
   "contentType": "application/pdf",
   "status": "ANALYSIS_COMPLETED",
   "createdAt": "2026-04-13T07:00:00Z",
-  "updatedAt": "2026-04-14T08:00:05Z"
+  "updatedAt": "2026-04-14T08:00:05Z",
+  "archivedAt": null
 }
 ```
 

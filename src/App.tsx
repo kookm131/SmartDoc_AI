@@ -7,6 +7,7 @@ import DocumentDetail from './components/DocumentDetail';
 import DashboardCards from './components/DashboardCards';
 import NotificationRulesPanel from './components/NotificationRulesPanel';
 import {
+  archiveDocument,
   clearStoredAccessToken,
   createAnalysisJob,
   createDocument,
@@ -256,6 +257,20 @@ export default function App() {
     }
   };
 
+  const handleArchiveDocument = async (documentId: string) => {
+    try {
+      const archived = await archiveDocument(documentId);
+      setDocuments((prev) => prev.filter((doc) => doc.documentId !== archived.documentId));
+      if (selectedDoc?.documentId === archived.documentId) {
+        setSelectedDoc(null);
+        setActiveTab('list');
+      }
+      setApiError(null);
+    } catch (error) {
+      setApiError(toApiError(error));
+    }
+  };
+
   const handleBack = () => {
     setSelectedDoc(null);
     setActiveTab('list');
@@ -432,6 +447,7 @@ export default function App() {
             submitting={submittingDocument}
             onDocumentClick={(doc) => void handleDocumentClick(doc)}
             onCreateDocument={handleCreateDocument}
+            onArchiveDocument={handleArchiveDocument}
             latestError={apiError}
           />
           <DashboardCards stats={dashboardStats} />

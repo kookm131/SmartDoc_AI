@@ -60,7 +60,7 @@
 작업 항목:
 - 파일 크기 제한 추가: 완료 (`SMARTDOC_MAX_UPLOAD_BYTES`, 기본 10MiB)
 - 허용 확장자와 content type 검증 강화: 완료 (`.pdf`, `.txt`, `.bin` 매핑 검증)
-- 문서 삭제 또는 보관 처리 정책 추가
+- 문서 삭제 또는 보관 처리 정책 추가: 완료 (`ARCHIVED`, `archived_at`, 기본 목록 제외)
 - 분석 job 중복 생성 방지 또는 최근 job 재사용 정책 결정
 - notification rule 수정/비활성화/삭제 API 추가
 - 공통 에러 코드 정리

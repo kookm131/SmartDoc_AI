@@ -108,6 +108,44 @@ class GatewayProxyApiTest {
     }
 
     @Test
+    fun `routes archived document list through gateway`() {
+        upstreamServer.respond(
+            "GET",
+            "/api/v1/documents/archived",
+            200,
+            """[{"documentId":"doc-1","status":"ARCHIVED"}]"""
+        )
+
+        mockMvc.perform(
+            get("/api/v1/documents/archived")
+                .header("Authorization", bearerToken())
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$[0].status").value("ARCHIVED"))
+
+        upstreamServer.assertLastRequest("GET", "/api/v1/documents/archived")
+    }
+
+    @Test
+    fun `routes document archive through gateway`() {
+        upstreamServer.respond(
+            "POST",
+            "/api/v1/documents/doc-1/archive",
+            200,
+            """{"documentId":"doc-1","status":"ARCHIVED"}"""
+        )
+
+        mockMvc.perform(
+            post("/api/v1/documents/doc-1/archive")
+                .header("Authorization", bearerToken())
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.status").value("ARCHIVED"))
+
+        upstreamServer.assertLastRequest("POST", "/api/v1/documents/doc-1/archive")
+    }
+
+    @Test
     fun `routes analysis get through gateway`() {
         upstreamServer.respond(
             "GET",

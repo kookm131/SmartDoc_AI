@@ -191,6 +191,46 @@ class DocumentApiTest {
     }
 
     @Test
+    fun `archives document and hides it from default list`() {
+        val created = mockMvc.perform(
+            post("/api/v1/documents")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"filename":"archive-me.pdf","fileKey":"uploads/archive-me.pdf"}""")
+        )
+            .andExpect(status().isCreated)
+            .andReturn()
+
+        val documentId = Regex(""""documentId":"([^"]+)"""")
+            .find(created.response.contentAsString)
+            ?.groupValues
+            ?.get(1)
+            ?: error("documentId not found")
+
+        mockMvc.perform(post("/api/v1/documents/$documentId/archive"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.documentId").value(documentId))
+            .andExpect(jsonPath("$.status").value("ARCHIVED"))
+            .andExpect(jsonPath("$.archivedAt").value(not(blankOrNullString())))
+
+        mockMvc.perform(get("/api/v1/documents"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.length()").value(0))
+
+        mockMvc.perform(get("/api/v1/documents/archived"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.length()").value(1))
+            .andExpect(jsonPath("$[0].documentId").value(documentId))
+
+        mockMvc.perform(
+            post("/api/v1/documents/$documentId/status")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"status":"ANALYSIS_COMPLETED"}""")
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.status").value("ARCHIVED"))
+    }
+
+    @Test
     fun `returns validation error for empty upload`() {
         val file = MockMultipartFile(
             "file",

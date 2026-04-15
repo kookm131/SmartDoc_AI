@@ -233,6 +233,10 @@ class DocumentProxyController(
     fun listDocuments(request: HttpServletRequest): ResponseEntity<String> =
         gatewayProxy.getDocument("/api/v1/documents", request)
 
+    @GetMapping("/archived")
+    fun listArchivedDocuments(request: HttpServletRequest): ResponseEntity<String> =
+        gatewayProxy.getDocument("/api/v1/documents/archived", request)
+
     @GetMapping("/{id}")
     fun getDocument(@PathVariable id: String, request: HttpServletRequest): ResponseEntity<String> =
         gatewayProxy.getDocument("/api/v1/documents/$id", request)
@@ -268,6 +272,10 @@ class DocumentProxyController(
         request: HttpServletRequest
     ): ResponseEntity<String> =
         gatewayProxy.postDocument("/api/v1/documents/$id/status", body, request)
+
+    @PostMapping("/{id}/archive")
+    fun archiveDocument(@PathVariable id: String, request: HttpServletRequest): ResponseEntity<String> =
+        gatewayProxy.postDocument("/api/v1/documents/$id/archive", "{}", request)
 }
 
 @RestController

@@ -141,6 +141,13 @@ export async function getDocumentById(id: string): Promise<DocumentRecord> {
   return request<DocumentRecord>(`${GATEWAY_API_BASE}/documents/${id}`);
 }
 
+export async function archiveDocument(id: string): Promise<DocumentRecord> {
+  return request<DocumentRecord>(`${GATEWAY_API_BASE}/documents/${id}/archive`, {
+    method: 'POST',
+    body: JSON.stringify({}),
+  });
+}
+
 export async function createDocument(input: DocumentCreateInput): Promise<DocumentRecord> {
   if (input.file) {
     const body = new FormData();

@@ -15,6 +15,7 @@
 - 로그아웃 시 서버는 stateless 처리하고 프론트에서 저장된 token을 삭제
 - 문서 목록에서 파일 선택 또는 메타데이터 입력으로 새 문서 등록 후 상세 화면으로 이동
 - 파일 선택 시 `POST /api/v1/documents/upload`로 로컬 업로드 API 호출
+- 문서 목록에서 보관 버튼으로 `POST /api/v1/documents/{id}/archive` 호출 후 기본 목록에서 제거
 - 알림 규칙 화면에서 `GET /api/v1/notifications/rules`, `POST /api/v1/notifications/rules`로 규칙 관리
 - 상세 화면에서 `POST /api/v1/analysis/jobs`로 분석 실행
 - 상세 화면에서 text/plain 파일 내용 기반 `resultSummary`, `riskScore`, `keywords` 표시

@@ -39,6 +39,7 @@ export interface DocumentRecord {
   status: string;
   createdAt: string;
   updatedAt: string;
+  archivedAt?: string | null;
 }
 
 export interface AnalysisJobRecord {

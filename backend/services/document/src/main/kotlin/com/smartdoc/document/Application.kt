@@ -63,7 +63,8 @@ data class DocumentCreateResponse(
     val contentType: String?,
     val status: String,
     val createdAt: Instant,
-    val updatedAt: Instant
+    val updatedAt: Instant,
+    val archivedAt: Instant?
 )
 
 data class DocumentStatusUpdateRequest(
@@ -242,7 +243,10 @@ class DocumentEntity(
     var createdAt: Instant = Instant.now(),
 
     @Column(name = "updated_at", nullable = false)
-    var updatedAt: Instant = Instant.now()
+    var updatedAt: Instant = Instant.now(),
+
+    @Column(name = "archived_at")
+    var archivedAt: Instant? = null
 ) {
     @PrePersist
     fun onCreate() {
@@ -260,6 +264,7 @@ class DocumentEntity(
 interface DocumentRepository : JpaRepository<DocumentEntity, String> {
     fun findByIdAndOwnerUserId(id: String, ownerUserId: String): DocumentEntity?
     fun findByOwnerUserId(ownerUserId: String): List<DocumentEntity>
+    fun findByOwnerUserIdAndStatusNot(ownerUserId: String, status: String): List<DocumentEntity>
 }
 
 @Service
@@ -343,7 +348,26 @@ class DocumentService(
         )
     }
 
-    fun list(ownerUserId: String): List<DocumentCreateResponse> = documentRepository.findByOwnerUserId(ownerUserId)
+    fun list(ownerUserId: String): List<DocumentCreateResponse> =
+        documentRepository.findByOwnerUserIdAndStatusNot(ownerUserId, ARCHIVED_STATUS)
+            .sortedByDescending { it.createdAt }
+            .map(::toResponse)
+
+    fun archive(documentId: String, ownerUserId: String): DocumentCreateResponse {
+        val found = documentRepository.findByIdAndOwnerUserId(documentId, ownerUserId)
+            ?: throw ResourceNotFoundException("document not found: $documentId")
+
+        if (found.status == ARCHIVED_STATUS) {
+            return toResponse(found)
+        }
+
+        found.status = ARCHIVED_STATUS
+        found.archivedAt = Instant.now()
+        return toResponse(documentRepository.save(found))
+    }
+
+    fun listArchived(ownerUserId: String): List<DocumentCreateResponse> = documentRepository.findByOwnerUserId(ownerUserId)
+        .filter { it.status == ARCHIVED_STATUS }
         .sortedByDescending { it.createdAt }
         .map(::toResponse)
 
@@ -353,6 +377,10 @@ class DocumentService(
 
         val found = documentRepository.findByIdAndOwnerUserId(documentId, ownerUserId)
             ?: throw ResourceNotFoundException("document not found: $documentId")
+
+        if (found.status == ARCHIVED_STATUS) {
+            return toResponse(found)
+        }
 
         found.status = normalizedStatus
         return toResponse(documentRepository.save(found))
@@ -367,7 +395,8 @@ class DocumentService(
             contentType = entity.contentType,
             status = entity.status,
             createdAt = entity.createdAt,
-            updatedAt = entity.updatedAt
+            updatedAt = entity.updatedAt,
+            archivedAt = entity.archivedAt
         )
 
     private fun validateUploadType(filename: String, contentType: String) {
@@ -385,12 +414,15 @@ class DocumentService(
     }
 
     companion object {
+        private const val ARCHIVED_STATUS = "ARCHIVED"
+
         private val ALLOWED_STATUSES = setOf(
             "RECEIVED",
             "ANALYSIS_QUEUED",
             "ANALYSIS_PROCESSING",
             "ANALYSIS_COMPLETED",
-            "ANALYSIS_FAILED"
+            "ANALYSIS_FAILED",
+            ARCHIVED_STATUS
         )
 
         private val ALLOWED_UPLOAD_TYPES = mapOf(
@@ -425,6 +457,14 @@ class DocumentController(
         servletRequest: HttpServletRequest
     ): DocumentCreateResponse = documentService.upload(file, fileKey, ownerUserIdFrom(servletRequest))
 
+    @GetMapping("/archived")
+    fun listArchivedDocuments(servletRequest: HttpServletRequest): List<DocumentCreateResponse> =
+        documentService.listArchived(ownerUserIdFrom(servletRequest))
+
+    @GetMapping
+    fun listDocuments(servletRequest: HttpServletRequest): List<DocumentCreateResponse> =
+        documentService.list(ownerUserIdFrom(servletRequest))
+
     @GetMapping("/{id}")
     fun getDocument(@PathVariable id: String, servletRequest: HttpServletRequest): DocumentCreateResponse {
         require(id.isNotBlank()) { "id must not be blank" }
@@ -437,9 +477,11 @@ class DocumentController(
         return documentService.getContent(id, ownerUserIdFrom(servletRequest))
     }
 
-    @GetMapping
-    fun listDocuments(servletRequest: HttpServletRequest): List<DocumentCreateResponse> =
-        documentService.list(ownerUserIdFrom(servletRequest))
+    @PostMapping("/{id}/archive")
+    fun archiveDocument(@PathVariable id: String, servletRequest: HttpServletRequest): DocumentCreateResponse {
+        require(id.isNotBlank()) { "id must not be blank" }
+        return documentService.archive(id, ownerUserIdFrom(servletRequest))
+    }
 
     @PatchMapping("/{id}/status")
     fun updateDocumentStatus(

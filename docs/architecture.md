@@ -24,6 +24,7 @@
 8. Notification이 같은 owner의 enabled rule과 키워드를 매칭해 알림 이벤트 저장
 9. Analysis 실패 시 Job을 `FAILED`로 저장하고 document 상태를 `ANALYSIS_FAILED`로 동기화
 10. 사용자가 재시도하면 Gateway를 통해 같은 Job이 `QUEUED`로 초기화되고 다시 상태 전이를 시작
+11. 문서 삭제 요청은 hard delete가 아니라 `ARCHIVED` 상태와 `archived_at` 기록으로 보관 처리
 
 ## 현재 단계와 연동 계획
 - 현재: 로컬 개발 단계(H2 또는 VM MariaDB/JPA, Gateway Auth v1, 로컬 파일 업로드, 실제 Docker 이미지, Kubernetes base 매니페스트)
