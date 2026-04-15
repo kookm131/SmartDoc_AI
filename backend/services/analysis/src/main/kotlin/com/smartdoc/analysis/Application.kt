@@ -113,7 +113,7 @@ interface NotificationDispatchPort {
 }
 
 @Service
-@Profile("local")
+@Profile("local | mariadb")
 class LocalAiAnalysisAdapter : AiAnalysisPort {
     override fun submit(command: AiAnalysisCommand): AiAnalysisResult =
         AiAnalysisResult(
@@ -133,7 +133,7 @@ class AwsAiAnalysisAdapter : AiAnalysisPort {
 }
 
 @Service
-@Profile("local")
+@Profile("local | mariadb")
 class LocalDocumentLookupAdapter(
     @Value("\${smartdoc.document.base-url:http://localhost:8081}")
     private val documentBaseUrl: String,
@@ -230,7 +230,7 @@ class AwsDocumentLookupAdapter : DocumentLookupPort {
 }
 
 @Service
-@Profile("local")
+@Profile("local | mariadb")
 class LocalNotificationDispatchAdapter(
     @Value("\${smartdoc.notification.base-url:http://localhost:8083}")
     private val notificationBaseUrl: String,

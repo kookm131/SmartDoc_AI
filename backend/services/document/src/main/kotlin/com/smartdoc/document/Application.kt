@@ -116,7 +116,7 @@ interface ObjectStoragePort {
 }
 
 @Service
-@Profile("local")
+@Profile("local | mariadb")
 class LocalObjectStorageAdapter(
     @Value("\${smartdoc.local-upload-dir:.smartdoc/uploads}")
     localUploadDir: String
