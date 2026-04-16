@@ -114,7 +114,7 @@ sequenceDiagram
 - 프론트엔드: 루트 앱(`src`, `vite`)
 - Gateway: API 진입점/라우팅/Auth v1
 - Document: 문서 수명주기/메타데이터
-- Analysis: Textract/Comprehend 오케스트레이션
+- Analysis: 로컬/PDF 분석, AWS Textract/Comprehend 오케스트레이션
 - Notification: 알림 디스패치
 - 저장소: S3(원본), RDBMS(메타데이터)
 
@@ -129,7 +129,7 @@ sequenceDiagram
 3. Gateway가 토큰을 검증한 뒤 `X-SmartDoc-User-Id`, `X-SmartDoc-User-Email` 헤더를 downstream 서비스에 전달
 4. Document가 `owner_user_id` 기준으로 원본 파일/문서 메타데이터를 저장하고 조회
 5. Analysis가 `owner_user_id` 기준으로 분석 Job을 생성하고 document 상태를 동기화
-6. Analysis가 같은 owner의 document 로컬 텍스트 내용을 조회해 키워드 감지 결과를 저장
+6. Analysis가 같은 owner의 document 텍스트/PDF 추출 내용을 조회해 키워드 감지 결과와 `resultDetails`를 저장
 7. Analysis가 notification으로 owner/키워드/위험 점수를 전달
 8. Notification이 같은 owner의 enabled rule과 키워드를 매칭해 알림 이벤트 저장
 
@@ -140,12 +140,14 @@ sequenceDiagram
 - document/analysis/notification 데이터는 `owner_user_id`로 분리됩니다.
 - Gateway를 거치지 않고 서비스를 직접 호출하면 로컬 개발 기본 owner인 `local-dev-user`가 사용됩니다.
 - 기본 프로필은 H2 in-memory이며, `SPRING_PROFILES_ACTIVE=mariadb`로 VM MariaDB를 사용할 수 있습니다.
+- 서비스 간 호출에는 `X-SmartDoc-Trace-Id`가 전파되며, smoke 실패 시 같은 trace id로 로그를 추적합니다.
+- 로컬 분석은 text/plain/PDF 내용과 파일 메타데이터를 함께 사용하며, 결과는 `resultSummary`, `resultDetails`, `riskScore`, `keywords`로 반환됩니다.
 - 로컬 컨테이너 검증:
   - Docker Compose: `infra/docker/docker-compose.yml`
   - Kubernetes: `smartdoc/*:local` 이미지를 kind/minikube에 로드 후 `infra/k8s/base` 적용
 - 다음: AWS/EKS 연동
   - 필요 시 후반부에 RDBMS를 AWS RDS 등으로 전환
-  - S3/Textract/Comprehend 연동 어댑터 추가
+  - S3/Textract/Comprehend 연동 어댑터를 `aws` 프로필에서 검증
   - EKS 배포(Deployment/Service + Ingress/Secret/ConfigMap)로 운영 경로 전환
 
 ## 가장 먼저 할 일
@@ -190,10 +192,15 @@ scripts/smoke-local.sh
 scripts/smoke-gateway.sh
 ```
 
+Smoke 스크립트는 서비스 health를 먼저 기다린 뒤 분석 Job이 `COMPLETED`가 될 때까지 polling합니다.
+Gateway smoke는 실패 응답과 `Trace` 값을 출력하므로 같은 trace id로 각 서비스 로그를 추적할 수 있습니다.
+
 로컬 개발용 로그인:
 - Gateway가 개발용 Auth v1을 담당합니다.
 - 기본 계정: `test@smartdoc.local` / `password`
-- 사용자 DB는 Gateway H2 in-memory라 재시작 시 초기화되지만, 기본 계정은 자동으로 다시 생성됩니다.
+- `local` 프로필은 Gateway H2 in-memory를 사용하므로 재시작 시 가입 사용자가 초기화됩니다.
+- `mariadb` 프로필은 VM MariaDB에 사용자 데이터를 유지합니다.
+- 기본 계정은 두 프로필 모두 seed로 자동 생성됩니다.
 
 ### 백엔드 + VM MariaDB
 H2 대신 VM MariaDB를 사용할 때는 `.env.example`을 참고해 `.env.local`에 DB 접속값을 둡니다.
@@ -230,6 +237,15 @@ scripts/smoke-gateway.sh
 주의:
 - `.env.local`에는 DB 비밀번호가 들어가므로 git에 올리지 않습니다.
 - H2 로컬 모드로 돌아가려면 `SPRING_PROFILES_ACTIVE=local`로 바꾸면 됩니다.
+- 기존 MariaDB 스키마가 오래된 경우 `analysis_jobs.result_details_json` 컬럼이 짧거나 non-UTF8일 수 있습니다. 새 코드에서는 compact/escaped JSON으로 방어하지만, 운영성 있게 쓰려면 아래처럼 컬럼을 넓혀둡니다.
+
+```sql
+ALTER TABLE smartdoc_analysis.analysis_jobs
+  MODIFY result_details_json LONGTEXT
+  CHARACTER SET utf8mb4
+  COLLATE utf8mb4_unicode_ci
+  NULL;
+```
 
 직접 실행할 때:
 
@@ -286,7 +302,7 @@ scripts/build-images.sh notification
 - 서비스 책임:
   - gateway: API 진입점/라우팅/Auth v1
   - document: 문서 업로드/메타데이터
-  - analysis: Textract/Comprehend 오케스트레이션
+  - analysis: 로컬/PDF 분석, 실패/재시도, Textract/Comprehend 오케스트레이션
   - notification: 규칙 기반 알림 디스패치
 - 환경변수 접두사:
   - `SMARTDOC_GATEWAY_*`
@@ -373,6 +389,7 @@ erDiagram
         string state
         string analysis_provider
         string result_summary
+        string result_details_json
         int risk_score
         string keywords
         string error_code
@@ -413,7 +430,7 @@ erDiagram
 ### 물리 스키마 초안 (기본 H2, 선택 VM MariaDB)
 - `app_users(user_id, email, password_hash, display_name, role, created_at)`
 - `documents(id, owner_user_id, file_key, filename, status, content_type, created_at, updated_at, archived_at)`
-- `analysis_jobs(id, owner_user_id, document_id, state, analysis_provider, result_summary, risk_score, keywords, error_code, error_message, failed_at, notification_dispatched_at, created_at)`
+- `analysis_jobs(id, owner_user_id, document_id, state, analysis_provider, result_summary, result_details_json, risk_score, keywords, error_code, error_message, failed_at, notification_dispatched_at, created_at)`
 - `keyword_detections(id, analysis_job_id, keyword, confidence, created_at)`
 - `notification_rules(id, owner_user_id, keyword, channel, enabled, created_at)`
 - `notification_events(id, owner_user_id, document_id, channel, message, status, created_at)`
@@ -425,8 +442,9 @@ erDiagram
 - `notification`: JPA로 `owner_user_id` 기준 `notification_events`, `notification_rules` 저장/조회
 - 기본 실행은 H2 in-memory이며, `mariadb` 프로필에서는 VM MariaDB의 서비스별 DB를 사용
 - Gateway가 `X-SmartDoc-User-Id` 헤더를 downstream 서비스에 전달하고, 헤더가 없으면 로컬 기본값 `local-dev-user`를 사용
+- Gateway/서비스 간 호출은 `X-SmartDoc-Trace-Id`를 전파해 smoke 실패와 서비스 로그를 연결
 - 문서 삭제는 hard delete 대신 `ARCHIVED` 상태와 `archived_at`으로 보관 처리
-- `analysis` 완료 시 키워드 감지 결과를 저장하고, enabled `notification_rules` 매칭 결과로 `notification_events`를 자동 생성
+- `analysis` 완료 시 `resultSummary`, compact `resultDetails`, 키워드 감지 결과를 저장하고, enabled `notification_rules` 매칭 결과로 `notification_events`를 자동 생성
 - `analysis` 실패 시 `FAILED` 상태와 오류 정보를 저장하고 document 상태를 `ANALYSIS_FAILED`로 동기화
 - `analysis_jobs.notification_dispatched_at`으로 같은 Job의 자동 알림 판단 중복을 방지
 
@@ -461,7 +479,7 @@ erDiagram
 - 파일 선택 시 `POST /api/v1/documents/upload`로 로컬 업로드 API 호출
 - 알림 규칙 화면에서 `GET /api/v1/notifications/rules`, `POST /api/v1/notifications/rules`로 규칙 관리
 - 상세 화면에서 `POST /api/v1/analysis/jobs`로 분석 실행
-- 상세 화면에서 text/plain 파일 내용 기반 `resultSummary`, `riskScore`, `keywords` 표시
+- 상세 화면에서 text/plain/PDF 파일 내용 기반 `resultSummary`, `resultDetails`, `riskScore`, `keywords` 표시
 - 분석 실패 시 실패 카드와 재시도 버튼으로 같은 Job을 다시 `QUEUED` 상태부터 실행
 - 분석 완료 후 enabled 알림 규칙과 키워드가 매칭되면 Slack 알림 이벤트 자동 생성
 - 상세 화면에서 `POST /api/v1/notifications/dispatch`로 Slack 알림 이벤트 수동 생성도 가능
@@ -469,7 +487,8 @@ erDiagram
 
 ### 로컬 인증 UX
 - 기본 로그인 계정: `test@smartdoc.local` / `password`
-- H2 in-memory라 재시작 시 가입 사용자는 초기화되지만, 기본 계정은 자동으로 다시 생성
+- `local` 프로필은 H2 in-memory라 재시작 시 가입 사용자가 초기화됩니다.
+- `mariadb` 프로필은 VM MariaDB에 가입 사용자와 seed 계정을 유지합니다.
 - 운영 인증 방식은 AWS/운영 배포 단계에서 별도 검토
 
 ### 캡처 로그 템플릿
@@ -482,8 +501,25 @@ erDiagram
 SmartDoc_AI/
 ├── README.md
 ├── package.json                # 프론트엔드 실행 단위(루트)
-├── src/
-├── backend/                    # 백엔드 서비스 코드
-├── infra/                      # Docker/K8s 매니페스트
-└── docs/                       # 역할별 문서(.md)
+├── index.html
+├── vite.config.ts
+├── src/                        # React/Vite 프론트엔드
+│   ├── App.tsx
+│   ├── api.ts
+│   ├── types.ts
+│   └── components/
+├── backend/
+│   └── services/               # Spring Boot + Kotlin 백엔드 서비스
+│       ├── gateway/            # API 진입점, Auth v1, downstream 프록시
+│       ├── document/           # 문서 업로드, 로컬/S3 저장, PDF/text 추출
+│       ├── analysis/           # 분석 Job, 키워드/위험 점수, 실패/재시도
+│       └── notification/       # 알림 규칙, 자동/수동 알림 이벤트
+├── infra/
+│   ├── docker/                 # Docker Compose, LocalStack compose
+│   └── k8s/
+│       ├── base/               # 공통 Namespace/Deployment/Service/Ingress
+│       ├── overlays/           # local, eks-alb, eks-nginx kustomize overlay
+│       └── addons/             # Container Insights 등 부가 매니페스트
+├── scripts/                    # 실행, smoke, 이미지 빌드/로드/ECR push
+└── docs/                       # API/Architecture/ERD/AWS/ECR/CloudWatch 문서
 ```
