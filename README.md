@@ -7,6 +7,10 @@ SmartDoc AI는 비정형 문서를 AI로 분석하고 후속 업무를 자동화
 - Architecture: [Architecture](#architecture)
 - ERD: [ERD](#erd)
 - API: [`docs/api.md`](./docs/api.md)
+- AWS Credentials: [`docs/aws-credentials.md`](./docs/aws-credentials.md)
+- Secrets Injection: [`docs/secrets-management.md`](./docs/secrets-management.md)
+- ECR Push: [`docs/ecr.md`](./docs/ecr.md)
+- CloudWatch: [`docs/cloudwatch-container-insights.md`](./docs/cloudwatch-container-insights.md)
 - UI: [UI](#ui)
 
 ## 전체 흐름

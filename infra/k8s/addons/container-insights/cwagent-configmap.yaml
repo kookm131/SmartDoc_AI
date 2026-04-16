@@ -1,0 +1,22 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: cwagentconfig
+  namespace: amazon-cloudwatch
+data:
+  # Minimal Container Insights metrics config.
+  cwagentconfig.json: |
+    {
+      "agent": {
+        "region": "us-east-1"
+      },
+      "logs": {
+        "metrics_collected": {
+          "kubernetes": {
+            "cluster_name": "REPLACE_ME_CLUSTER_NAME",
+            "metrics_collection_interval": 60
+          }
+        }
+      }
+    }
+

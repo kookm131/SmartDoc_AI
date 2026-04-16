@@ -252,6 +252,8 @@ class AwsObjectStorageAdapter(
     private val s3Endpoint: String,
     @Value("\${SMARTDOC_AWS_S3_PATH_STYLE:true}")
     private val pathStyleEnabled: Boolean,
+    @Value("\${SMARTDOC_S3_AUTO_CREATE_BUCKET:false}")
+    private val autoCreateBucket: Boolean,
     @Value("\${AWS_ACCESS_KEY_ID:}")
     private val accessKeyId: String,
     @Value("\${AWS_SECRET_ACCESS_KEY:}")
@@ -353,6 +355,9 @@ class AwsObjectStorageAdapter(
 
     private fun bucketName(): String = bucket.trim().ifBlank { "smartdoc-local" }
 
+    private fun shouldAutoCreateBucket(): Boolean =
+        autoCreateBucket || s3Endpoint.trim().isNotBlank()
+
     private fun ensureBucketExistsIfNeeded() {
         if (bucketChecked.get()) return
         synchronized(bucketChecked) {
@@ -362,11 +367,14 @@ class AwsObjectStorageAdapter(
             try {
                 s3.headBucket(HeadBucketRequest.builder().bucket(b).build())
             } catch (_: Exception) {
-                try {
-                    s3.createBucket(CreateBucketRequest.builder().bucket(b).build())
-                } catch (_: Exception) {
-                    // ignore
+                if (shouldAutoCreateBucket()) {
+                    try {
+                        s3.createBucket(CreateBucketRequest.builder().bucket(b).build())
+                    } catch (_: Exception) {
+                        // ignore
+                    }
                 }
+                Unit
             } finally {
                 bucketChecked.set(true)
             }

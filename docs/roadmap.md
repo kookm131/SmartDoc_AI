@@ -92,14 +92,14 @@
 목표: 비용이 드는 AWS 연동을 마지막 단계에서 흔들림 없이 붙입니다.
 
 작업 항목:
-- S3 업로드 어댑터 구현
-- Textract 텍스트 추출 어댑터 구현
-- Comprehend 또는 대체 AI 분석 어댑터 구현
-- AWS credential 주입 방식 정리
-- Secret Manager 또는 Parameter Store 사용 검토
-- ECR 이미지 푸시 흐름 추가
-- EKS 배포용 Ingress/Secret/ConfigMap 정리
-- CloudWatch 로그/메트릭 수집 설정
+- S3 업로드 어댑터 구현: 완료 (document `aws` 프로필에서 S3 put/get + LocalStack endpoint 지원)
+- Textract 텍스트 추출 어댑터 구현: 완료 (analysis `aws` 프로필에서 opt-in Textract 추출, 실패 시 document `/content` fallback)
+- Comprehend 또는 대체 AI 분석 어댑터 구현: 완료 (analysis `aws` 프로필에서 opt-in Comprehend keyPhrase signals enrichment, 실패 시 무시)
+- AWS credential 주입 방식 정리: 완료 (`docs/aws-credentials.md`에 DefaultCredentialsProvider/IRSA/LocalStack 기준선 정리)
+- Secret Manager 또는 Parameter Store 사용 검토: 완료 (런타임 fetch 대신 배포 시 K8s Secret/ConfigMap 주입 기준선 확정, `docs/secrets-management.md`)
+- ECR 이미지 푸시 흐름 추가: 완료 (`scripts/push-ecr.sh`, `docs/ecr.md`, service별 repo + latest/sha 태그)
+- EKS 배포용 Ingress/Secret/ConfigMap 정리: 완료 (kustomize overlays: `infra/k8s/overlays/eks-alb`, `infra/k8s/overlays/eks-nginx`)
+- CloudWatch 로그/메트릭 수집 설정: 완료 (Container Insights addon: `infra/k8s/addons/container-insights`, 문서: `docs/cloudwatch-container-insights.md`)
 
 완료 기준:
 - `SPRING_PROFILES_ACTIVE=aws`에서 S3/Textract 기반 분석 흐름이 동작합니다.

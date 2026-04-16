@@ -1,0 +1,12 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: smartdoc-app-config
+  namespace: smartdoc
+data:
+  SPRING_PROFILES_ACTIVE: aws
+  SMARTDOC_AWS_REGION: us-east-1
+  SMARTDOC_S3_BUCKET: smartdoc-local
+  SMARTDOC_TEXTRACT_ENABLED: "false"
+  SMARTDOC_COMPREHEND_ENABLED: "false"
+

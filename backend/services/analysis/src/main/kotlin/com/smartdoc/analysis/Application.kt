@@ -38,6 +38,21 @@ import org.springframework.web.filter.OncePerRequestFilter
 import org.springframework.web.client.HttpClientErrorException
 import org.springframework.web.client.RestClient
 import org.springframework.web.client.RestClientException
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
+import software.amazon.awssdk.regions.Region
+import software.amazon.awssdk.services.comprehend.ComprehendClient
+import software.amazon.awssdk.services.comprehend.model.DetectKeyPhrasesRequest
+import software.amazon.awssdk.services.comprehend.model.LanguageCode
+import software.amazon.awssdk.services.textract.TextractClient
+import software.amazon.awssdk.services.textract.model.BlockType
+import software.amazon.awssdk.services.textract.model.DocumentLocation
+import software.amazon.awssdk.services.textract.model.GetDocumentTextDetectionRequest
+import software.amazon.awssdk.services.textract.model.JobStatus
+import software.amazon.awssdk.services.textract.model.S3Object
+import software.amazon.awssdk.services.textract.model.StartDocumentTextDetectionRequest
+import java.net.URI
 import java.time.Duration
 import java.time.Instant
 import java.util.UUID
@@ -156,6 +171,14 @@ interface DocumentLookupPort {
     fun get(documentId: String, ownerUserId: String): DocumentInfo
     fun readTextContent(documentId: String, ownerUserId: String): String?
     fun updateStatus(documentId: String, status: String, ownerUserId: String)
+}
+
+interface TextExtractionPort {
+    fun extractText(document: DocumentInfo, ownerUserId: String): String?
+}
+
+interface KeywordEnrichmentPort {
+    fun enrichSignals(textContent: String?, document: DocumentInfo): List<String>
 }
 
 data class DocumentInfo(
@@ -300,6 +323,228 @@ class AwsDocumentLookupAdapter : DocumentLookupPort {
 
     override fun readTextContent(documentId: String, ownerUserId: String): String? = null
     override fun updateStatus(documentId: String, status: String, ownerUserId: String) = Unit
+}
+
+@Service
+@Profile("local | mariadb")
+class LocalTextExtractionAdapter(
+    private val documentLookupPort: DocumentLookupPort
+) : TextExtractionPort {
+    override fun extractText(document: DocumentInfo, ownerUserId: String): String? =
+        documentLookupPort.readTextContent(document.documentId, ownerUserId)
+}
+
+@Service
+@Profile("aws")
+class AwsTextractTextExtractionAdapter(
+    private val documentLookupPort: DocumentLookupPort,
+    @Value("\${SMARTDOC_TEXTRACT_ENABLED:false}")
+    private val enabled: Boolean,
+    @Value("\${SMARTDOC_S3_BUCKET:smartdoc-local}")
+    private val s3Bucket: String,
+    @Value("\${SMARTDOC_AWS_REGION:us-east-1}")
+    private val region: String,
+    @Value("\${SMARTDOC_AWS_TEXTRACT_ENDPOINT:}")
+    private val textractEndpoint: String,
+    @Value("\${SMARTDOC_TEXTRACT_POLL_MS:750}")
+    private val pollMs: Long,
+    @Value("\${SMARTDOC_TEXTRACT_MAX_WAIT_MS:15000}")
+    private val maxWaitMs: Long,
+    @Value("\${AWS_ACCESS_KEY_ID:}")
+    private val accessKeyId: String,
+    @Value("\${AWS_SECRET_ACCESS_KEY:}")
+    private val secretAccessKey: String
+) : TextExtractionPort {
+    private val logger = LoggerFactory.getLogger(javaClass)
+    private val maxChars = 20_000
+
+    private val textract: TextractClient = run {
+        val builder = TextractClient.builder()
+            .region(Region.of(region.trim().ifBlank { "us-east-1" }))
+
+        val endpoint = textractEndpoint.trim()
+        if (endpoint.isNotBlank()) {
+            builder.endpointOverride(URI.create(endpoint))
+        }
+
+        if (accessKeyId.isNotBlank() && secretAccessKey.isNotBlank()) {
+            builder.credentialsProvider(
+                StaticCredentialsProvider.create(
+                    AwsBasicCredentials.create(accessKeyId.trim(), secretAccessKey.trim())
+                )
+            )
+        } else {
+            builder.credentialsProvider(DefaultCredentialsProvider.create())
+        }
+
+        builder.build()
+    }
+
+    override fun extractText(document: DocumentInfo, ownerUserId: String): String? {
+        // Keep aws profile safe by default: disabled -> fallback to document service.
+        if (!enabled) {
+            return documentLookupPort.readTextContent(document.documentId, ownerUserId)
+        }
+
+        val contentType = document.contentType?.trim()
+        if (contentType != "application/pdf") {
+            return documentLookupPort.readTextContent(document.documentId, ownerUserId)
+        }
+
+        val key = document.fileKey.trim()
+        if (key.isBlank()) {
+            return documentLookupPort.readTextContent(document.documentId, ownerUserId)
+        }
+
+        return try {
+            val jobId = textract.startDocumentTextDetection(
+                StartDocumentTextDetectionRequest.builder()
+                    .documentLocation(
+                        DocumentLocation.builder()
+                            .s3Object(
+                                S3Object.builder()
+                                    .bucket(s3Bucket.trim().ifBlank { "smartdoc-local" })
+                                    .name(key)
+                                    .build()
+                            )
+                            .build()
+                    )
+                    .build()
+            ).jobId()
+
+            val deadline = System.currentTimeMillis() + maxWaitMs.coerceAtLeast(1000)
+            var nextToken: String? = null
+            var lastStatus: JobStatus? = null
+            val lines = mutableListOf<String>()
+
+            while (System.currentTimeMillis() < deadline) {
+                val resp = textract.getDocumentTextDetection(
+                    GetDocumentTextDetectionRequest.builder()
+                        .jobId(jobId)
+                        .nextToken(nextToken)
+                        .build()
+                )
+
+                val status = resp.jobStatus()
+                lastStatus = status
+                if (status == JobStatus.FAILED || status == JobStatus.PARTIAL_SUCCESS) {
+                    break
+                }
+
+                if (status == JobStatus.SUCCEEDED) {
+                    resp.blocks()
+                        ?.asSequence()
+                        ?.filter { it.blockType() == BlockType.LINE }
+                        ?.mapNotNull { it.text()?.trim()?.takeIf { t -> t.isNotBlank() } }
+                        ?.forEach { text ->
+                            if (lines.sumOf { it.length } < maxChars) {
+                                lines.add(text)
+                            }
+                        }
+                    nextToken = resp.nextToken()
+                    if (nextToken.isNullOrBlank()) {
+                        break
+                    }
+                    continue
+                }
+
+                Thread.sleep(pollMs.coerceIn(200, 2000))
+            }
+
+            val combined = lines.joinToString("\n").trim().takeIf { it.isNotBlank() }
+            if (combined != null) {
+                combined.take(maxChars)
+            } else {
+                logger.warn("textract returned no text (status={}) for key={}", lastStatus, key)
+                documentLookupPort.readTextContent(document.documentId, ownerUserId)
+            }
+        } catch (ex: Exception) {
+            logger.warn("textract extraction failed for key={}: {}", key, ex.message)
+            documentLookupPort.readTextContent(document.documentId, ownerUserId)
+        }
+    }
+}
+
+@Service
+@Profile("local | mariadb")
+class LocalKeywordEnrichmentAdapter : KeywordEnrichmentPort {
+    override fun enrichSignals(textContent: String?, document: DocumentInfo): List<String> = emptyList()
+}
+
+@Service
+@Profile("aws")
+class AwsComprehendKeywordEnrichmentAdapter(
+    @Value("\${SMARTDOC_COMPREHEND_ENABLED:false}")
+    private val enabled: Boolean,
+    @Value("\${SMARTDOC_AWS_REGION:us-east-1}")
+    private val region: String,
+    @Value("\${SMARTDOC_AWS_COMPREHEND_ENDPOINT:}")
+    private val comprehendEndpoint: String,
+    @Value("\${SMARTDOC_COMPREHEND_MAX_SIGNALS:8}")
+    private val maxSignals: Int,
+    @Value("\${SMARTDOC_COMPREHEND_MIN_SCORE:0.35}")
+    private val minScore: Double,
+    @Value("\${AWS_ACCESS_KEY_ID:}")
+    private val accessKeyId: String,
+    @Value("\${AWS_SECRET_ACCESS_KEY:}")
+    private val secretAccessKey: String
+) : KeywordEnrichmentPort {
+    private val logger = LoggerFactory.getLogger(javaClass)
+
+    private val comprehend: ComprehendClient = run {
+        val builder = ComprehendClient.builder()
+            .region(Region.of(region.trim().ifBlank { "us-east-1" }))
+
+        val endpoint = comprehendEndpoint.trim()
+        if (endpoint.isNotBlank()) {
+            builder.endpointOverride(URI.create(endpoint))
+        }
+
+        if (accessKeyId.isNotBlank() && secretAccessKey.isNotBlank()) {
+            builder.credentialsProvider(
+                StaticCredentialsProvider.create(
+                    AwsBasicCredentials.create(accessKeyId.trim(), secretAccessKey.trim())
+                )
+            )
+        } else {
+            builder.credentialsProvider(DefaultCredentialsProvider.create())
+        }
+
+        builder.build()
+    }
+
+    override fun enrichSignals(textContent: String?, document: DocumentInfo): List<String> {
+        if (!enabled) return emptyList()
+        val text = textContent?.trim()?.takeIf { it.isNotBlank() } ?: return emptyList()
+
+        // Comprehend synchronous APIs have small payload limits; keep it conservative.
+        val input = text.take(4500)
+        val language = if (input.any { it in '\uAC00'..'\uD7A3' }) LanguageCode.KO else LanguageCode.EN
+
+        return try {
+            val resp = comprehend.detectKeyPhrases(
+                DetectKeyPhrasesRequest.builder()
+                    .languageCode(language)
+                    .text(input)
+                    .build()
+            )
+
+            resp.keyPhrases()
+                ?.asSequence()
+                ?.filter { it.score() >= minScore }
+                ?.sortedByDescending { it.score() }
+                ?.mapNotNull { it.text()?.replace('\n', ' ')?.trim() }
+                ?.filter { it.isNotBlank() }
+                ?.distinct()
+                ?.take(maxSignals.coerceIn(0, 20))
+                ?.map { phrase -> "comprehend:keyPhrase:${phrase.take(64)}" }
+                ?.toList()
+                ?: emptyList()
+        } catch (ex: Exception) {
+            logger.warn("comprehend enrich failed: {}", ex.message)
+            emptyList()
+        }
+    }
 }
 
 @Service
@@ -486,6 +731,8 @@ interface KeywordDetectionRepository : JpaRepository<KeywordDetectionEntity, Str
 class AnalysisJobService(
     private val aiAnalysisPort: AiAnalysisPort,
     private val documentLookupPort: DocumentLookupPort,
+    private val textExtractionPort: TextExtractionPort,
+    private val keywordEnrichmentPort: KeywordEnrichmentPort,
     private val notificationDispatchPort: NotificationDispatchPort,
     private val analysisJobRepository: AnalysisJobRepository,
     private val keywordDetectionRepository: KeywordDetectionRepository,
@@ -640,7 +887,8 @@ class AnalysisJobService(
 
     private fun analyzeDocument(documentId: String, ownerUserId: String): LocalAnalysisResult {
         val document = documentLookupPort.get(documentId, ownerUserId)
-        val textContent = documentLookupPort.readTextContent(documentId, ownerUserId)
+        val textContent = textExtractionPort.extractText(document, ownerUserId)
+        val enrichmentSignals = keywordEnrichmentPort.enrichSignals(textContent, document)
         val searchTarget = listOfNotNull(textContent, document.filename, document.fileKey)
             .joinToString(" ")
             .lowercase()
@@ -698,7 +946,7 @@ class AnalysisJobService(
                     "completeness=$completeness",
                     "extractionStatus=$extractionStatus",
                     "riskLevel=${risk.level}"
-                )
+                ) + enrichmentSignals
             )
         )
     }

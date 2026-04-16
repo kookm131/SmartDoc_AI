@@ -3,7 +3,7 @@ services:
     image: localstack/localstack:3.8.1
     container_name: smartdoc-localstack
     environment:
-      SERVICES: s3
+      SERVICES: s3,textract
       DEFAULT_REGION: us-east-1
       DEBUG: "0"
     ports:
