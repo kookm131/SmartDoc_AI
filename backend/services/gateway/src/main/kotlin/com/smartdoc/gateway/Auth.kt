@@ -9,16 +9,20 @@ import jakarta.persistence.Table
 import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
 import jakarta.servlet.http.HttpServletResponse
+import org.slf4j.MDC
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.CommandLineRunner
 import org.springframework.context.annotation.Bean
 import org.springframework.context.annotation.Configuration
+import org.springframework.core.Ordered
+import org.springframework.core.annotation.Order
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import org.springframework.http.ResponseEntity
 import org.springframework.stereotype.Component
 import org.springframework.stereotype.Service
+import org.springframework.web.multipart.MaxUploadSizeExceededException
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
@@ -28,6 +32,7 @@ import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.bind.annotation.RestControllerAdvice
 import org.springframework.web.filter.OncePerRequestFilter
+import org.springframework.web.multipart.MultipartException
 import java.nio.charset.StandardCharsets
 import java.security.MessageDigest
 import java.security.SecureRandom
@@ -42,6 +47,32 @@ import javax.crypto.spec.SecretKeySpec
 const val AUTH_USER_ATTRIBUTE = "smartdoc.auth.user"
 const val SMARTDOC_USER_ID_HEADER = "X-SmartDoc-User-Id"
 const val SMARTDOC_USER_EMAIL_HEADER = "X-SmartDoc-User-Email"
+const val SMARTDOC_TRACE_ID_HEADER = "X-SmartDoc-Trace-Id"
+const val TRACE_ID_ATTRIBUTE = "smartdoc.traceId"
+
+private fun traceIdFrom(request: HttpServletRequest): String =
+    (request.getAttribute(TRACE_ID_ATTRIBUTE) as? String)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: request.getHeader(SMARTDOC_TRACE_ID_HEADER)?.trim()?.takeIf { it.isNotBlank() }
+        ?: UUID.randomUUID().toString()
+
+@Component
+@Order(Ordered.HIGHEST_PRECEDENCE)
+class TraceIdFilter : OncePerRequestFilter() {
+    override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, filterChain: FilterChain) {
+        val traceId = request.getHeader(SMARTDOC_TRACE_ID_HEADER)?.trim()?.takeIf { it.isNotBlank() }
+            ?: UUID.randomUUID().toString()
+        request.setAttribute(TRACE_ID_ATTRIBUTE, traceId)
+        response.setHeader(SMARTDOC_TRACE_ID_HEADER, traceId)
+        MDC.put("traceId", traceId)
+        try {
+            filterChain.doFilter(request, response)
+        } finally {
+            MDC.remove("traceId")
+        }
+    }
+}
 
 @Entity
 @Table(name = "app_users")
@@ -286,7 +317,9 @@ class GatewayAuthFilter(
     }
 
     private fun isPublicPath(path: String): Boolean =
-        path in publicPaths || path.startsWith("/actuator")
+        path in publicPaths ||
+            path == "/actuator/health" ||
+            path.startsWith("/actuator/health/")
 
     private fun writeUnauthorized(response: HttpServletResponse, request: HttpServletRequest, message: String) {
         response.status = HttpStatus.UNAUTHORIZED.value()
@@ -299,7 +332,7 @@ class GatewayAuthFilter(
                     path = request.requestURI,
                     code = "AUTHENTICATION_REQUIRED",
                     message = message,
-                    traceId = UUID.randomUUID().toString()
+                    traceId = traceIdFrom(request)
                 )
             )
         )
@@ -365,7 +398,7 @@ class GatewayExceptionHandler {
                 path = request.requestURI,
                 code = "VALIDATION_ERROR",
                 message = ex.message ?: "validation failed",
-                traceId = UUID.randomUUID().toString()
+                traceId = traceIdFrom(request)
             )
         )
 
@@ -377,7 +410,31 @@ class GatewayExceptionHandler {
                 path = request.requestURI,
                 code = "AUTHENTICATION_REQUIRED",
                 message = ex.message ?: "authentication required",
-                traceId = UUID.randomUUID().toString()
+                traceId = traceIdFrom(request)
+            )
+        )
+
+    @ExceptionHandler(MaxUploadSizeExceededException::class, MultipartException::class)
+    fun handleMultipartError(ex: Exception, request: HttpServletRequest): ResponseEntity<ApiErrorResponse> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiErrorResponse(
+                timestamp = Instant.now(),
+                path = request.requestURI,
+                code = "VALIDATION_ERROR",
+                message = "file size must be less than or equal to ${System.getenv("SMARTDOC_MAX_UPLOAD_BYTES") ?: "10485760"} bytes",
+                traceId = traceIdFrom(request)
+            )
+        )
+
+    @ExceptionHandler(Exception::class)
+    fun handleUnexpected(ex: Exception, request: HttpServletRequest): ResponseEntity<ApiErrorResponse> =
+        ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
+            ApiErrorResponse(
+                timestamp = Instant.now(),
+                path = request.requestURI,
+                code = "INTERNAL_ERROR",
+                message = "unexpected server error",
+                traceId = traceIdFrom(request)
             )
         )
 }

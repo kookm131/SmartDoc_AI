@@ -9,16 +9,37 @@ import {
   ChevronsLeft,
   ChevronsRight,
   Archive,
+  Inbox,
 } from 'lucide-react';
 import { ApiErrorResponse, DocumentCreateInput, DocumentRecord } from '../types';
+
+const DEFAULT_MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
+const MAX_UPLOAD_BYTES =
+  typeof import.meta !== 'undefined' && (import.meta as any).env?.VITE_SMARTDOC_MAX_UPLOAD_BYTES
+    ? Number((import.meta as any).env.VITE_SMARTDOC_MAX_UPLOAD_BYTES)
+    : DEFAULT_MAX_UPLOAD_BYTES;
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) {
+    return '-';
+  }
+  const mib = bytes / (1024 * 1024);
+  if (mib >= 1) {
+    return `${mib.toFixed(mib >= 10 ? 0 : 1)}MiB`;
+  }
+  const kib = bytes / 1024;
+  return `${kib.toFixed(kib >= 10 ? 0 : 1)}KiB`;
+}
 
 interface DocumentListProps {
   documents: DocumentRecord[];
   loading: boolean;
   submitting: boolean;
+  mode: 'active' | 'archived';
+  onModeChange: (mode: 'active' | 'archived') => void;
   onDocumentClick: (doc: DocumentRecord) => void;
   onCreateDocument: (input: DocumentCreateInput) => Promise<void>;
-  onArchiveDocument: (documentId: string) => Promise<void>;
+  onArchiveDocument?: (documentId: string) => Promise<void>;
   latestError: ApiErrorResponse | null;
 }
 
@@ -26,6 +47,8 @@ export default function DocumentList({
   documents,
   loading,
   submitting,
+  mode,
+  onModeChange,
   onDocumentClick,
   onCreateDocument,
   onArchiveDocument,
@@ -60,42 +83,60 @@ export default function DocumentList({
     <div className="max-w-[1600px] mx-auto flex flex-col gap-6">
       <header className="flex flex-col md:flex-row md:items-end justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold tracking-tight text-on-surface mb-1">문서 분석 목록</h1>
+          <h1 className="text-3xl font-bold tracking-tight text-on-surface mb-1">
+            {mode === 'archived' ? '보관 문서' : '문서 분석 목록'}
+          </h1>
           <p className="text-on-surface-variant text-sm">
-            전체 엔터프라이즈 문서의 AI 분석 결과 및 데이터 현황을 확인하세요.
+            {mode === 'archived'
+              ? '보관 처리된 문서 목록입니다.'
+              : '전체 엔터프라이즈 문서의 AI 분석 결과 및 데이터 현황을 확인하세요.'}
           </p>
         </div>
         <div className="flex gap-3">
+          <button
+            onClick={() => onModeChange(mode === 'archived' ? 'active' : 'archived')}
+            className="flex items-center gap-2 px-4 py-2 bg-surface-container-low text-on-surface rounded-xl font-semibold hover:bg-surface-container-high transition-colors border border-outline-variant/20"
+          >
+            <Inbox className="w-5 h-5" />
+            <span>{mode === 'archived' ? '기본 목록' : '보관함'}</span>
+          </button>
           <button className="flex items-center gap-2 px-4 py-2 bg-secondary-container text-on-secondary-container rounded-xl font-semibold hover:brightness-95 transition-all">
             <Download className="w-5 h-5" />
             <span>CSV 내보내기</span>
           </button>
-          <button
-            onClick={() => setShowCreateForm((prev) => !prev)}
-            className="flex items-center gap-2 px-6 py-2 bg-gradient-to-r from-primary to-primary-container text-white rounded-xl font-semibold shadow-lg shadow-primary/10 hover:brightness-110 active:scale-95 transition-all"
-          >
-            <Plus className="w-5 h-5" />
-            <span>새 문서 분석</span>
-          </button>
+          {mode === 'active' && (
+            <button
+              onClick={() => setShowCreateForm((prev) => !prev)}
+              className="flex items-center gap-2 px-6 py-2 bg-gradient-to-r from-primary to-primary-container text-white rounded-xl font-semibold shadow-lg shadow-primary/10 hover:brightness-110 active:scale-95 transition-all"
+            >
+              <Plus className="w-5 h-5" />
+              <span>새 문서 분석</span>
+            </button>
+          )}
         </div>
       </header>
 
-      {showCreateForm && (
+      {mode === 'active' && showCreateForm && (
         <section className="bg-surface-container-lowest rounded-xl p-5 shadow-sm border border-outline-variant/10">
           <form className="grid grid-cols-1 md:grid-cols-5 gap-3" onSubmit={handleSubmit}>
-            <input
-              type="file"
-              accept=".pdf,.txt,.bin,application/pdf,text/plain,application/octet-stream"
-              onChange={(event) => {
-                const file = event.target.files?.[0] ?? null;
-                setSelectedFile(file);
-                if (file) {
-                  setFilename((prev) => prev || file.name);
-                  setContentType(file.type || 'application/octet-stream');
-                }
-              }}
-              className="px-3 py-2.5 bg-surface-container-highest/50 rounded-xl outline-none focus:ring-2 focus:ring-primary/40 text-sm"
-            />
+            <div className="flex flex-col gap-1">
+              <input
+                type="file"
+                accept=".pdf,.txt,.bin,application/pdf,text/plain,application/octet-stream"
+                onChange={(event) => {
+                  const file = event.target.files?.[0] ?? null;
+                  setSelectedFile(file);
+                  if (file) {
+                    setFilename((prev) => prev || file.name);
+                    setContentType(file.type || 'application/octet-stream');
+                  }
+                }}
+                className="px-3 py-2.5 bg-surface-container-highest/50 rounded-xl outline-none focus:ring-2 focus:ring-primary/40 text-sm"
+              />
+              <p className="text-[11px] text-on-surface-variant px-1">
+                최대 업로드 크기: {formatBytes(MAX_UPLOAD_BYTES)} (기본 10MiB)
+              </p>
+            </div>
             <input
               required={!selectedFile}
               value={filename}
@@ -213,13 +254,15 @@ export default function DocumentList({
                   >
                     상세 보기
                   </button>
-                  <button
-                    onClick={() => void onArchiveDocument(doc.documentId)}
-                    className="inline-flex items-center gap-1 px-3 py-1 text-xs rounded-lg border border-outline-variant/20 text-on-surface-variant hover:bg-error/5 hover:text-error"
-                  >
-                    <Archive className="h-3.5 w-3.5" />
-                    보관
-                  </button>
+                  {mode === 'active' && onArchiveDocument && (
+                    <button
+                      onClick={() => void onArchiveDocument(doc.documentId)}
+                      className="inline-flex items-center gap-1 px-3 py-1 text-xs rounded-lg border border-outline-variant/20 text-on-surface-variant hover:bg-error/5 hover:text-error"
+                    >
+                      <Archive className="h-3.5 w-3.5" />
+                      보관
+                    </button>
+                  )}
                 </div>
               </div>
             ))}

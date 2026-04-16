@@ -15,6 +15,7 @@ import {
 
 const GATEWAY_API_BASE = '/api/gateway';
 const ACCESS_TOKEN_STORAGE_KEY = 'smartdoc.accessToken';
+const TRACE_ID_HEADER = 'X-SmartDoc-Trace-Id';
 
 export function getStoredAccessToken(): string | null {
   return window.localStorage.getItem(ACCESS_TOKEN_STORAGE_KEY);
@@ -42,32 +43,96 @@ function isApiError(value: unknown): value is ApiErrorResponse {
   );
 }
 
+function createTraceId(): string {
+  if (typeof window !== 'undefined' && typeof window.crypto?.randomUUID === 'function') {
+    return window.crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function parseJsonSafely(text: string): unknown {
+  if (!text) {
+    return null;
+  }
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return text;
+  }
+}
+
+function toApiErrorFallback(params: {
+  url: string;
+  code: string;
+  message: string;
+  traceId: string;
+}): ApiErrorResponse {
+  return {
+    timestamp: new Date().toISOString(),
+    path: params.url,
+    code: params.code,
+    message: params.message,
+    traceId: params.traceId,
+  };
+}
+
+function buildHeaders(initHeaders: RequestInit['headers'], defaults: Record<string, string>): Headers {
+  const headers = new Headers(initHeaders);
+  Object.entries(defaults).forEach(([key, value]) => {
+    if (!headers.has(key)) {
+      headers.set(key, value);
+    }
+  });
+  return headers;
+}
+
 async function request<T>(url: string, init?: RequestInit): Promise<T> {
   const token = getStoredAccessToken();
-  const response = await fetch(url, {
-    ...init,
-    headers: {
-      'Content-Type': 'application/json',
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...(init?.headers ?? {}),
-    },
+  const traceId = createTraceId();
+  const headers = buildHeaders(init?.headers, {
+    'Content-Type': 'application/json',
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    [TRACE_ID_HEADER]: traceId,
   });
 
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      ...init,
+      headers,
+    });
+  } catch {
+    throw toApiErrorFallback({
+      url,
+      code: 'NETWORK_ERROR',
+      message: 'network request failed',
+      traceId,
+    });
+  }
+
   const text = await response.text();
-  const data: unknown = text ? JSON.parse(text) : null;
+  const data: unknown = parseJsonSafely(text);
 
   if (!response.ok) {
     if (isApiError(data)) {
       throw data;
     }
 
-    throw {
-      timestamp: new Date().toISOString(),
-      path: url,
-      code: 'HTTP_ERROR',
-      message: `request failed with status ${response.status}`,
-      traceId: 'N/A',
-    } satisfies ApiErrorResponse;
+    const responseTraceId = response.headers.get(TRACE_ID_HEADER) ?? traceId;
+    const snippet = typeof data === 'string' ? data.slice(0, 160) : '';
+    const message =
+      response.status === 413
+        ? 'file size exceeds server limit'
+        : snippet
+          ? `request failed with status ${response.status}: ${snippet}`
+          : `request failed with status ${response.status}`;
+
+    throw toApiErrorFallback({
+      url,
+      code: response.status === 413 ? 'VALIDATION_ERROR' : 'HTTP_ERROR',
+      message,
+      traceId: responseTraceId,
+    });
   }
 
   return data as T;
@@ -75,29 +140,51 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
 
 async function requestForm<T>(url: string, body: FormData): Promise<T> {
   const token = getStoredAccessToken();
-  const response = await fetch(url, {
-    method: 'POST',
-    headers: {
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-    },
-    body,
+  const traceId = createTraceId();
+  const headers = buildHeaders(undefined, {
+    ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    [TRACE_ID_HEADER]: traceId,
   });
 
+  let response: Response;
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      headers,
+      body,
+    });
+  } catch {
+    throw toApiErrorFallback({
+      url,
+      code: 'NETWORK_ERROR',
+      message: 'network request failed',
+      traceId,
+    });
+  }
+
   const text = await response.text();
-  const data: unknown = text ? JSON.parse(text) : null;
+  const data: unknown = parseJsonSafely(text);
 
   if (!response.ok) {
     if (isApiError(data)) {
       throw data;
     }
 
-    throw {
-      timestamp: new Date().toISOString(),
-      path: url,
-      code: 'HTTP_ERROR',
-      message: `request failed with status ${response.status}`,
-      traceId: 'N/A',
-    } satisfies ApiErrorResponse;
+    const responseTraceId = response.headers.get(TRACE_ID_HEADER) ?? traceId;
+    const snippet = typeof data === 'string' ? data.slice(0, 160) : '';
+    const message =
+      response.status === 413
+        ? 'file size exceeds server limit'
+        : snippet
+          ? `request failed with status ${response.status}: ${snippet}`
+          : `request failed with status ${response.status}`;
+
+    throw toApiErrorFallback({
+      url,
+      code: response.status === 413 ? 'VALIDATION_ERROR' : 'HTTP_ERROR',
+      message,
+      traceId: responseTraceId,
+    });
   }
 
   return data as T;
@@ -135,6 +222,10 @@ export async function logout(): Promise<void> {
 
 export async function listDocuments(): Promise<DocumentRecord[]> {
   return request<DocumentRecord[]>(`${GATEWAY_API_BASE}/documents`);
+}
+
+export async function listArchivedDocuments(): Promise<DocumentRecord[]> {
+  return request<DocumentRecord[]>(`${GATEWAY_API_BASE}/documents/archived`);
 }
 
 export async function getDocumentById(id: string): Promise<DocumentRecord> {

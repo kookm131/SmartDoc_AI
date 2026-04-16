@@ -1,0 +1,20 @@
+services:
+  localstack:
+    image: localstack/localstack:3.8.1
+    container_name: smartdoc-localstack
+    environment:
+      SERVICES: s3
+      DEFAULT_REGION: us-east-1
+      DEBUG: "0"
+    ports:
+      - "4566:4566"
+    volumes:
+      - localstack-data:/var/lib/localstack
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:4566/_localstack/health | grep -q '\"s3\": \"running\"'"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  localstack-data:

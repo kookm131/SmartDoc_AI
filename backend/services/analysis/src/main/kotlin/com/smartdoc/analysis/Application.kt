@@ -1,16 +1,24 @@
 package com.smartdoc.analysis
 
+import com.fasterxml.jackson.core.json.JsonWriteFeature
+import com.fasterxml.jackson.databind.ObjectMapper
 import jakarta.persistence.Column
 import jakarta.persistence.Entity
 import jakarta.persistence.Id
+import jakarta.persistence.Lob
 import jakarta.persistence.PrePersist
 import jakarta.persistence.Table
 import jakarta.persistence.UniqueConstraint
+import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
 import org.slf4j.LoggerFactory
+import org.slf4j.MDC
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
+import org.springframework.core.Ordered
+import org.springframework.core.annotation.Order
 import org.springframework.context.annotation.Profile
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.http.HttpStatus
@@ -26,6 +34,7 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.filter.OncePerRequestFilter
 import org.springframework.web.client.HttpClientErrorException
 import org.springframework.web.client.RestClient
 import org.springframework.web.client.RestClientException
@@ -38,6 +47,35 @@ class Application
 
 fun main(args: Array<String>) {
     runApplication<Application>(*args)
+}
+
+private const val SMARTDOC_TRACE_ID_HEADER = "X-SmartDoc-Trace-Id"
+private const val TRACE_ID_ATTRIBUTE = "smartdoc.traceId"
+
+private fun traceIdFrom(request: HttpServletRequest): String =
+    (request.getAttribute(TRACE_ID_ATTRIBUTE) as? String)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: request.getHeader(SMARTDOC_TRACE_ID_HEADER)?.trim()?.takeIf { it.isNotBlank() }
+        ?: UUID.randomUUID().toString()
+
+private fun currentTraceId(): String = MDC.get("traceId")?.trim()?.takeIf { it.isNotBlank() } ?: UUID.randomUUID().toString()
+
+@Service
+@Order(Ordered.HIGHEST_PRECEDENCE)
+class TraceIdFilter : OncePerRequestFilter() {
+    override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, filterChain: FilterChain) {
+        val traceId = request.getHeader(SMARTDOC_TRACE_ID_HEADER)?.trim()?.takeIf { it.isNotBlank() }
+            ?: UUID.randomUUID().toString()
+        request.setAttribute(TRACE_ID_ATTRIBUTE, traceId)
+        response.setHeader(SMARTDOC_TRACE_ID_HEADER, traceId)
+        MDC.put("traceId", traceId)
+        try {
+            filterChain.doFilter(request, response)
+        } finally {
+            MDC.remove("traceId")
+        }
+    }
 }
 
 @RestController
@@ -62,11 +100,42 @@ data class AnalysisJobResponse(
     val createdAt: Instant,
     val analysisProvider: String,
     val resultSummary: String?,
+    val resultDetails: AnalysisResultDetails?,
     val riskScore: Int?,
     val keywords: List<String>,
     val errorCode: String?,
     val errorMessage: String?,
     val failedAt: Instant?
+)
+
+data class AnalysisResultDetails(
+    val basis: String,
+    val completeness: String = "FULL",
+    val extraction: AnalysisExtractionDetails? = null,
+    val summary: AnalysisStructuredSummary? = null,
+    val risk: AnalysisRiskDetails? = null,
+    val highlights: List<String> = emptyList(),
+    val signals: List<String> = emptyList()
+)
+
+data class AnalysisExtractionDetails(
+    val status: String,
+    val contentType: String? = null,
+    val textChars: Int? = null,
+    val note: String? = null
+)
+
+data class AnalysisStructuredSummary(
+    val title: String,
+    val bullets: List<String> = emptyList()
+)
+
+data class AnalysisRiskDetails(
+    val baseScore: Int,
+    val keywordScore: Int,
+    val urgentScore: Int,
+    val cappedScore: Int,
+    val level: String
 )
 
 data class AiAnalysisCommand(
@@ -133,7 +202,7 @@ class AwsAiAnalysisAdapter : AiAnalysisPort {
 }
 
 @Service
-@Profile("local | mariadb")
+@Profile("local | mariadb | aws")
 class LocalDocumentLookupAdapter(
     @Value("\${smartdoc.document.base-url:http://localhost:8081}")
     private val documentBaseUrl: String,
@@ -156,6 +225,7 @@ class LocalDocumentLookupAdapter(
         client.get()
             .uri("/api/v1/documents/{id}", documentId)
             .header(SMARTDOC_USER_ID_HEADER, ownerUserId)
+            .header(SMARTDOC_TRACE_ID_HEADER, currentTraceId())
             .retrieve()
             .toBodilessEntity()
         true
@@ -171,6 +241,7 @@ class LocalDocumentLookupAdapter(
         client.get()
             .uri("/api/v1/documents/{id}", documentId)
             .header(SMARTDOC_USER_ID_HEADER, ownerUserId)
+            .header(SMARTDOC_TRACE_ID_HEADER, currentTraceId())
             .retrieve()
             .body(DocumentInfo::class.java)
             ?: throw ExternalServiceException("document service returned empty lookup response")
@@ -186,6 +257,7 @@ class LocalDocumentLookupAdapter(
         client.get()
             .uri("/api/v1/documents/{id}/content", documentId)
             .header(SMARTDOC_USER_ID_HEADER, ownerUserId)
+            .header(SMARTDOC_TRACE_ID_HEADER, currentTraceId())
             .retrieve()
             .body(DocumentContentInfo::class.java)
             ?.textContent
@@ -200,6 +272,7 @@ class LocalDocumentLookupAdapter(
             client.post()
                 .uri("/api/v1/documents/{id}/status", documentId)
                 .header(SMARTDOC_USER_ID_HEADER, ownerUserId)
+                .header(SMARTDOC_TRACE_ID_HEADER, currentTraceId())
                 .body(mapOf("status" to status))
                 .retrieve()
                 .toBodilessEntity()
@@ -214,7 +287,7 @@ class LocalDocumentLookupAdapter(
 }
 
 @Service
-@Profile("aws")
+@Profile("aws-stub")
 class AwsDocumentLookupAdapter : DocumentLookupPort {
     override fun exists(documentId: String, ownerUserId: String): Boolean = true
     override fun get(documentId: String, ownerUserId: String): DocumentInfo =
@@ -230,7 +303,7 @@ class AwsDocumentLookupAdapter : DocumentLookupPort {
 }
 
 @Service
-@Profile("local | mariadb")
+@Profile("local | mariadb | aws")
 class LocalNotificationDispatchAdapter(
     @Value("\${smartdoc.notification.base-url:http://localhost:8083}")
     private val notificationBaseUrl: String,
@@ -265,6 +338,7 @@ class LocalNotificationDispatchAdapter(
             client.post()
                 .uri("/api/v1/notifications/dispatch")
                 .header(SMARTDOC_USER_ID_HEADER, ownerUserId)
+                .header(SMARTDOC_TRACE_ID_HEADER, currentTraceId())
                 .body(
                     mapOf(
                         "documentId" to documentId,
@@ -284,7 +358,7 @@ class LocalNotificationDispatchAdapter(
 }
 
 @Service
-@Profile("aws")
+@Profile("aws-stub")
 class AwsNotificationDispatchAdapter : NotificationDispatchPort {
     override fun dispatchAnalysisCompleted(
         documentId: String,
@@ -334,6 +408,10 @@ class AnalysisJobEntity(
     @Column(name = "result_summary", length = 1024)
     var resultSummary: String? = null,
 
+    @Lob
+    @Column(name = "result_details_json", columnDefinition = "LONGTEXT")
+    var resultDetailsJson: String? = null,
+
     @Column(name = "risk_score")
     var riskScore: Int? = null,
 
@@ -363,6 +441,7 @@ class AnalysisJobEntity(
 
 interface AnalysisJobRepository : JpaRepository<AnalysisJobEntity, String> {
     fun findByIdAndOwnerUserId(id: String, ownerUserId: String): AnalysisJobEntity?
+    fun findFirstByOwnerUserIdAndDocumentIdOrderByCreatedAtDesc(ownerUserId: String, documentId: String): AnalysisJobEntity?
 }
 
 @Entity
@@ -409,13 +488,25 @@ class AnalysisJobService(
     private val documentLookupPort: DocumentLookupPort,
     private val notificationDispatchPort: NotificationDispatchPort,
     private val analysisJobRepository: AnalysisJobRepository,
-    private val keywordDetectionRepository: KeywordDetectionRepository
+    private val keywordDetectionRepository: KeywordDetectionRepository,
+    private val objectMapper: ObjectMapper
 ) {
     fun create(request: AnalysisJobCreateRequest, ownerUserId: String): AnalysisJobResponse {
         val docId = request.documentId.trim()
         if (!documentLookupPort.exists(docId, ownerUserId)) {
             throw ResourceNotFoundException("document not found: $docId")
         }
+
+        // Prevent duplicate jobs by reusing the latest job per (owner, document).
+        // If the latest job is FAILED, treat "create" as a convenience retry.
+        analysisJobRepository.findFirstByOwnerUserIdAndDocumentIdOrderByCreatedAtDesc(ownerUserId, docId)
+            ?.let { latest ->
+                return if (latest.state == "FAILED") {
+                    retry(latest.id, ownerUserId)
+                } else {
+                    toResponse(advanceLocalState(latest))
+                }
+            }
 
         val result = aiAnalysisPort.submit(AiAnalysisCommand(documentId = docId))
 
@@ -447,6 +538,7 @@ class AnalysisJobService(
         found.state = "QUEUED"
         found.createdAt = Instant.now()
         found.resultSummary = null
+        found.resultDetailsJson = null
         found.riskScore = null
         found.keywords = ""
         found.errorCode = null
@@ -483,6 +575,7 @@ class AnalysisJobService(
             try {
                 val result = analyzeDocument(entity.documentId, entity.ownerUserId)
                 entity.resultSummary = result.summary
+                entity.resultDetailsJson = writeResultDetailsJson(result.details)
                 entity.riskScore = result.riskScore
                 entity.keywords = result.keywords.joinToString(",")
                 entity.errorCode = null
@@ -491,6 +584,7 @@ class AnalysisJobService(
             } catch (ex: LocalAnalysisFailedException) {
                 entity.state = "FAILED"
                 entity.resultSummary = null
+                entity.resultDetailsJson = null
                 entity.riskScore = null
                 entity.keywords = ""
                 entity.errorCode = "LOCAL_ANALYSIS_FAILED"
@@ -558,21 +652,90 @@ class AnalysisJobService(
             .filter { rule -> rule.aliases.any { alias -> searchTarget.contains(alias.lowercase()) } }
             .map { it.keyword }
             .ifEmpty { listOf("검토") }
-        val riskScore = calculateRiskScore(detectedKeywords, textContent)
-        val basis = if (textContent.isNullOrBlank()) "문서 메타데이터" else "업로드된 텍스트 파일 내용"
+        val risk = calculateRisk(detectedKeywords, textContent)
+        val basis = if (textContent.isNullOrBlank()) "METADATA" else "CONTENT"
+        val basisText = if (basis == "CONTENT") "업로드된 파일 내용" else "문서 메타데이터"
+        val completeness = if (basis == "CONTENT") "FULL" else "PARTIAL"
+        val extractionStatus = when {
+            basis == "CONTENT" -> "SUCCESS"
+            document.contentType in setOf("text/plain", "application/pdf") -> "EMPTY"
+            else -> "UNAVAILABLE"
+        }
+        val extractionNote = when (extractionStatus) {
+            "SUCCESS" -> null
+            "EMPTY" -> "텍스트를 추출하지 못했거나 내용이 비어있습니다."
+            else -> "이 contentType에서는 텍스트 추출을 제공하지 않습니다."
+        }
+        val riskText = "${risk.cappedScore}점(${risk.level})"
 
         return LocalAnalysisResult(
-            summary = "로컬 분석이 완료되었습니다. $basis 기준으로 ${detectedKeywords.joinToString(", ")} 키워드를 감지했습니다.",
-            riskScore = riskScore,
-            keywords = detectedKeywords
+            summary = "로컬 분석이 완료되었습니다. $basisText 기준으로 ${detectedKeywords.joinToString(", ")} 키워드를 감지했습니다.",
+            riskScore = risk.cappedScore,
+            keywords = detectedKeywords,
+            details = AnalysisResultDetails(
+                basis = basis,
+                completeness = completeness,
+                extraction = AnalysisExtractionDetails(
+                    status = extractionStatus,
+                    contentType = document.contentType,
+                    textChars = textContent?.length,
+                    note = extractionNote
+                ),
+                summary = AnalysisStructuredSummary(
+                    title = "분석 요약",
+                    bullets = listOf(
+                        "분석 기준: $basisText",
+                        "감지 키워드: ${detectedKeywords.joinToString(", ")}",
+                        "위험 점수: $riskText"
+                    )
+                ),
+                risk = risk,
+                highlights = listOf(
+                    "detectedKeywords=${detectedKeywords.joinToString(",")}",
+                    "riskScore=${risk.cappedScore}"
+                ),
+                signals = detectedKeywords.map { "keyword:$it" } + listOf(
+                    "completeness=$completeness",
+                    "extractionStatus=$extractionStatus",
+                    "riskLevel=${risk.level}"
+                )
+            )
         )
     }
 
-    private fun calculateRiskScore(keywords: List<String>, textContent: String?): Int {
+    private fun writeResultDetailsJson(details: AnalysisResultDetails): String =
+        detailsJsonWriter()
+            .writeValueAsString(details)
+            .takeIf { it.length <= MAX_RESULT_DETAILS_JSON_CHARS }
+            ?: detailsJsonWriter().writeValueAsString(
+                mapOf(
+                    "basis" to details.basis,
+                    "completeness" to details.completeness,
+                    "highlights" to details.highlights
+                )
+            )
+
+    private fun detailsJsonWriter() =
+        objectMapper.writer()
+            .with(JsonWriteFeature.ESCAPE_NON_ASCII.mappedFeature())
+
+    private fun calculateRisk(keywords: List<String>, textContent: String?): AnalysisRiskDetails {
         val baseScore = if (textContent.isNullOrBlank()) 20 else 30
         val keywordScore = keywords.size * 12
         val urgentScore = if (keywords.any { it in setOf("긴급", "위험", "개인정보") }) 20 else 0
-        return (baseScore + keywordScore + urgentScore).coerceAtMost(100)
+        val capped = (baseScore + keywordScore + urgentScore).coerceAtMost(100)
+        val level = when {
+            capped >= 70 -> "HIGH"
+            capped >= 40 -> "MEDIUM"
+            else -> "LOW"
+        }
+        return AnalysisRiskDetails(
+            baseScore = baseScore,
+            keywordScore = keywordScore,
+            urgentScore = urgentScore,
+            cappedScore = capped,
+            level = level
+        )
     }
 
     private fun keywordsFor(entity: AnalysisJobEntity): List<String> {
@@ -596,8 +759,16 @@ class AnalysisJobService(
             else -> "ANALYSIS_QUEUED"
         }
 
-    private fun toResponse(entity: AnalysisJobEntity): AnalysisJobResponse =
-        AnalysisJobResponse(
+    private fun toResponse(entity: AnalysisJobEntity): AnalysisJobResponse {
+        val parsedDetails = entity.resultDetailsJson?.let { json ->
+            try {
+                objectMapper.readValue(json, AnalysisResultDetails::class.java)
+            } catch (_: Exception) {
+                null
+            }
+        }
+
+        return AnalysisJobResponse(
             jobId = entity.id,
             ownerUserId = entity.ownerUserId,
             documentId = entity.documentId,
@@ -605,12 +776,65 @@ class AnalysisJobService(
             createdAt = entity.createdAt,
             analysisProvider = entity.analysisProvider,
             resultSummary = entity.resultSummary,
+            resultDetails = compatibleResultDetails(entity, parsedDetails),
             riskScore = entity.riskScore,
             keywords = keywordsFor(entity),
             errorCode = entity.errorCode,
             errorMessage = entity.errorMessage,
             failedAt = entity.failedAt
         )
+    }
+
+    private fun compatibleResultDetails(
+        entity: AnalysisJobEntity,
+        details: AnalysisResultDetails?
+    ): AnalysisResultDetails? {
+        if (entity.state != "COMPLETED" || entity.resultSummary.isNullOrBlank()) {
+            return details
+        }
+
+        val keywords = keywordsFor(entity)
+        val inferredBasis = if (entity.resultSummary?.contains("업로드된 파일 내용") == true) "CONTENT" else "METADATA"
+        val basis = details?.basis ?: inferredBasis
+        val completeness = details?.completeness ?: if (basis == "CONTENT") "FULL" else "PARTIAL"
+        val extractionStatus = details?.extraction?.status ?: if (basis == "CONTENT") "SUCCESS" else "EMPTY"
+        val risk = details?.risk ?: entity.riskScore?.let { score ->
+            AnalysisRiskDetails(
+                baseScore = 0,
+                keywordScore = 0,
+                urgentScore = 0,
+                cappedScore = score,
+                level = riskLevel(score)
+            )
+        }
+
+        return AnalysisResultDetails(
+            basis = basis,
+            completeness = completeness,
+            extraction = details?.extraction ?: AnalysisExtractionDetails(
+                status = extractionStatus,
+                note = if (extractionStatus == "SUCCESS") null else "이전 분석 결과라 텍스트 추출 상세 정보가 제한됩니다."
+            ),
+            summary = details?.summary ?: AnalysisStructuredSummary(
+                title = "분석 요약",
+                bullets = listOf(
+                    "분석 기준: ${if (basis == "CONTENT") "업로드된 파일 내용" else "문서 메타데이터"}",
+                    "감지 키워드: ${keywords.takeIf { it.isNotEmpty() }?.joinToString(", ") ?: "없음"}",
+                    "위험 점수: ${entity.riskScore?.let { "${it}점(${riskLevel(it)})" } ?: "미정"}"
+                )
+            ),
+            risk = risk,
+            highlights = details?.highlights ?: emptyList(),
+            signals = details?.signals ?: emptyList()
+        )
+    }
+
+    private fun riskLevel(score: Int): String =
+        when {
+            score >= 70 -> "HIGH"
+            score >= 40 -> "MEDIUM"
+            else -> "LOW"
+        }
 
     private data class LocalKeywordRule(
         val keyword: String,
@@ -620,7 +844,8 @@ class AnalysisJobService(
     private data class LocalAnalysisResult(
         val summary: String,
         val riskScore: Int,
-        val keywords: List<String>
+        val keywords: List<String>,
+        val details: AnalysisResultDetails
     )
 
     private companion object {
@@ -631,9 +856,20 @@ class AnalysisJobService(
             LocalKeywordRule("긴급", listOf("긴급", "urgent")),
             LocalKeywordRule("위험", listOf("위험", "risk")),
             LocalKeywordRule("청구", listOf("청구", "invoice", "billing")),
-            LocalKeywordRule("개인정보", listOf("개인정보", "privacy", "personal"))
+            LocalKeywordRule("개인정보", listOf("개인정보", "privacy", "personal")),
+
+            // Contract / compliance signals
+            LocalKeywordRule("해지", listOf("해지", "termination", "cancel")),
+            LocalKeywordRule("위약금", listOf("위약금", "penalty", "liquidated damages")),
+            LocalKeywordRule("자동갱신", listOf("자동갱신", "auto-renew", "auto renew")),
+            LocalKeywordRule("수수료", listOf("수수료", "fee")),
+            LocalKeywordRule("지급", listOf("지급", "payment")),
+            LocalKeywordRule("기한", listOf("기한", "deadline", "due date")),
+            LocalKeywordRule("비밀유지", listOf("비밀유지", "nda", "confidential")),
+            LocalKeywordRule("SLA", listOf("sla", "service level"))
         )
         val LOCAL_FAILURE_MARKERS = listOf("분석실패", "fail", "analysis-fail", "force-fail")
+        const val MAX_RESULT_DETAILS_JSON_CHARS = 240
     }
 }
 
@@ -667,6 +903,8 @@ class AnalysisController(
 
 @RestControllerAdvice
 class ApiExceptionHandler {
+    private val logger = LoggerFactory.getLogger(javaClass)
+
     @ExceptionHandler(IllegalArgumentException::class)
     fun handleValidationError(
         ex: IllegalArgumentException,
@@ -678,7 +916,7 @@ class ApiExceptionHandler {
                 path = request.requestURI,
                 code = "VALIDATION_ERROR",
                 message = ex.message ?: "validation failed",
-                traceId = UUID.randomUUID().toString()
+                traceId = traceIdFrom(request)
             )
         )
 
@@ -693,7 +931,7 @@ class ApiExceptionHandler {
                 path = request.requestURI,
                 code = "RESOURCE_NOT_FOUND",
                 message = ex.message ?: "resource not found",
-                traceId = UUID.randomUUID().toString()
+                traceId = traceIdFrom(request)
             )
         )
 
@@ -708,7 +946,7 @@ class ApiExceptionHandler {
                 path = request.requestURI,
                 code = "UPSTREAM_DOCUMENT_ERROR",
                 message = ex.message ?: "upstream document service error",
-                traceId = UUID.randomUUID().toString()
+                traceId = traceIdFrom(request)
             )
         )
 
@@ -716,14 +954,17 @@ class ApiExceptionHandler {
     fun handleUnexpectedError(
         ex: Exception,
         request: HttpServletRequest
-    ): ResponseEntity<ApiErrorResponse> =
-        ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
+    ): ResponseEntity<ApiErrorResponse> {
+        val traceId = traceIdFrom(request)
+        logger.error("unexpected analysis service error traceId={} path={}", traceId, request.requestURI, ex)
+        return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(
             ApiErrorResponse(
                 timestamp = Instant.now(),
                 path = request.requestURI,
                 code = "INTERNAL_ERROR",
-                message = ex.message ?: "unexpected server error",
-                traceId = UUID.randomUUID().toString()
+                message = "${ex.javaClass.simpleName}: ${ex.message ?: "unexpected server error"}",
+                traceId = traceId
             )
         )
+    }
 }

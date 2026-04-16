@@ -61,12 +61,12 @@
 - 파일 크기 제한 추가: 완료 (`SMARTDOC_MAX_UPLOAD_BYTES`, 기본 10MiB)
 - 허용 확장자와 content type 검증 강화: 완료 (`.pdf`, `.txt`, `.bin` 매핑 검증)
 - 문서 삭제 또는 보관 처리 정책 추가: 완료 (`ARCHIVED`, `archived_at`, 기본 목록 제외)
-- 분석 job 중복 생성 방지 또는 최근 job 재사용 정책 결정
-- notification rule 수정/비활성화/삭제 API 추가
-- 공통 에러 코드 정리
-- 서비스 간 호출 traceId 전달
-- actuator 노출 범위 정리
-- 로그에 민감정보가 남지 않는지 점검
+- 분석 job 중복 생성 방지 또는 최근 job 재사용 정책 결정: 완료 (`POST /analysis/jobs`는 최신 job 재사용, FAILED면 자동 retry)
+- notification rule 수정/비활성화/삭제 API 추가: 완료 (`PATCH/DELETE /notifications/rules/{id}`)
+- 공통 에러 코드 정리: 완료 (`docs/api.md` 기준 코드/HTTP status 표준화, INTERNAL_ERROR 메시지 누출 방지)
+- 서비스 간 호출 traceId 전달: 완료 (`X-SmartDoc-Trace-Id` 전파, 에러 응답 traceId 일관화)
+- actuator 노출 범위 정리: 완료 (actuator는 `health`만 노출, gateway는 `/actuator/health`만 공개)
+- 로그에 민감정보가 남지 않는지 점검: 완료 (INTERNAL_ERROR 메시지 고정, SQL 로그 기본 off)
 
 완료 기준:
 - 잘못된 파일과 요청이 일관된 `VALIDATION_ERROR`로 반환됩니다.
@@ -77,11 +77,11 @@
 목표: stub 분석을 실제 문서 분석에 가깝게 확장합니다.
 
 작업 항목:
-- 로컬 PDF 텍스트 추출 구현
-- 파일 내용 기반 키워드 규칙 확장
-- 분석 결과 요약 필드 구조화
-- 위험 점수 계산 기준 문서화
-- 추출 실패와 부분 성공 상태 정의
+- 로컬 PDF 텍스트 추출 구현: 완료 (document `/content`에서 PDF 텍스트 추출)
+- 파일 내용 기반 키워드 규칙 확장: 완료 (해지/위약금/자동갱신/수수료/지급/기한/비밀유지/SLA 추가)
+- 분석 결과 요약 필드 구조화: 완료 (analysis `resultDetails.summary` + UI 불릿 표시)
+- 위험 점수 계산 기준 문서화: 완료 (analysis `resultDetails.risk` + architecture 문서에 규칙 명시)
+- 추출 실패와 부분 성공 상태 정의: 완료 (`completeness`, `extraction.status`로 fallback/부분 성공 표현)
 
 완료 기준:
 - text/plain뿐 아니라 PDF에서도 텍스트를 추출합니다.

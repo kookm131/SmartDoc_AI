@@ -26,6 +26,26 @@
 10. 사용자가 재시도하면 Gateway를 통해 같은 Job이 `QUEUED`로 초기화되고 다시 상태 전이를 시작
 11. 문서 삭제 요청은 hard delete가 아니라 `ARCHIVED` 상태와 `archived_at` 기록으로 보관 처리
 
+## 로컬 분석 결과 구조
+`analysis` 서비스의 `GET /api/v1/analysis/jobs/{id}`는 아래 필드를 중심으로 결과를 제공합니다.
+- `resultSummary`: UI용 한 줄 요약(호환성 유지 목적)
+- `riskScore`: 0~100 정수 점수
+- `keywords`: 감지 키워드 목록
+- `resultDetails`: 구조화된 부가 정보
+  - `basis`: `CONTENT`(파일 내용 기반) 또는 `METADATA`(filename/fileKey 기반 fallback)
+  - `completeness`: `FULL` 또는 `PARTIAL`(내용 추출 실패/미지원 등으로 fallback이 사용된 경우)
+  - `extraction`: 텍스트 추출 상태(`SUCCESS`/`EMPTY`/`UNAVAILABLE`)
+  - `summary`: 구조화된 요약(타이틀/불릿)
+  - `risk`: 위험 점수 산출 근거(베이스/키워드/긴급 점수 및 최종 레벨)
+
+### 위험 점수(로컬) 기준
+현재 로컬 riskScore는 단순 규칙 기반으로 계산합니다(향후 AWS/LLM 분석으로 대체 가능).
+- baseScore: CONTENT면 30, METADATA면 20
+- keywordScore: 감지 키워드 개수 * 12
+- urgentScore: `긴급` 또는 `위험` 또는 `개인정보`가 포함되면 +20
+- 최종 점수는 100을 넘지 않도록 cap
+- 레벨: `LOW`(<40), `MEDIUM`(40~69), `HIGH`(>=70)
+
 ## 현재 단계와 연동 계획
 - 현재: 로컬 개발 단계(H2 또는 VM MariaDB/JPA, Gateway Auth v1, 로컬 파일 업로드, 실제 Docker 이미지, Kubernetes base 매니페스트)
 - Gateway Auth v1은 별도 인증 서비스를 띄우지 않고 Gateway DB에 `app_users`를 저장합니다.

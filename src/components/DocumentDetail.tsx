@@ -174,13 +174,51 @@ export default function DocumentDetail({
                 )}
                 <div>
                   <p className="text-xs text-on-surface-variant mb-2">현재 상태</p>
-                  <p className="text-sm font-bold text-primary">{analysisJob?.state || '대기'}</p>
+                  <div className="flex flex-wrap items-center gap-2">
+                    <p className="text-sm font-bold text-primary">{analysisJob?.state || '대기'}</p>
+                    {analysisJob?.resultDetails?.completeness === 'PARTIAL' && (
+                      <span className="rounded-full bg-tertiary/10 px-2 py-0.5 text-[11px] font-bold text-tertiary">
+                        부분 분석
+                      </span>
+                    )}
+                    {analysisJob?.resultDetails?.extraction?.status && (
+                      <span className="rounded-full bg-primary/10 px-2 py-0.5 text-[11px] font-bold text-primary">
+                        추출:{analysisJob.resultDetails.extraction.status}
+                      </span>
+                    )}
+                    {analysisJob?.resultDetails?.risk?.level && (
+                      <span className="rounded-full bg-secondary/15 px-2 py-0.5 text-[11px] font-bold text-secondary">
+                        risk:{analysisJob.resultDetails.risk.level}
+                      </span>
+                    )}
+                  </div>
                 </div>
                 <div>
                   <p className="text-xs text-on-surface-variant mb-2">요약</p>
-                  <p className="text-sm text-on-surface-variant leading-relaxed">
-                    {analysisJob?.resultSummary || '분석 완료 후 요약이 표시됩니다.'}
-                  </p>
+                  {analysisJob?.resultDetails?.summary?.bullets?.length ? (
+                    <div className="space-y-1">
+                      <p className="text-sm font-bold text-on-surface">{analysisJob.resultDetails.summary.title || '분석 요약'}</p>
+                      <ul className="list-disc pl-5 text-sm text-on-surface-variant leading-relaxed">
+                        {analysisJob.resultDetails.summary.bullets.map((bullet) => (
+                          <li key={bullet}>{bullet}</li>
+                        ))}
+                      </ul>
+                      {analysisJob?.resultSummary && (
+                        <p className="mt-2 text-xs text-on-surface-variant">
+                          {analysisJob.resultSummary}
+                        </p>
+                      )}
+                      {analysisJob?.resultDetails?.extraction?.note && (
+                        <p className="mt-2 text-[11px] text-on-surface-variant">
+                          note: {analysisJob.resultDetails.extraction.note}
+                        </p>
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-sm text-on-surface-variant leading-relaxed">
+                      {analysisJob?.resultSummary || '분석 완료 후 요약이 표시됩니다.'}
+                    </p>
+                  )}
                 </div>
                 <div className="grid grid-cols-2 gap-3">
                   <div className="bg-surface-container-lowest p-3 rounded-lg">

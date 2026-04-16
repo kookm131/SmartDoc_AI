@@ -6,17 +6,24 @@ import jakarta.persistence.Id
 import jakarta.persistence.PrePersist
 import jakarta.persistence.Table
 import jakarta.persistence.UniqueConstraint
+import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
+import org.slf4j.MDC
 import org.springframework.boot.CommandLineRunner
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
 import org.springframework.context.annotation.Bean
+import org.springframework.core.Ordered
+import org.springframework.core.annotation.Order
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.http.HttpStatus
 import org.springframework.http.ResponseEntity
 import org.springframework.stereotype.Service
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
@@ -24,6 +31,7 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.filter.OncePerRequestFilter
 import java.time.Instant
 import java.util.UUID
 
@@ -46,6 +54,33 @@ class Application {
 
 fun main(args: Array<String>) {
     runApplication<Application>(*args)
+}
+
+private const val SMARTDOC_TRACE_ID_HEADER = "X-SmartDoc-Trace-Id"
+private const val TRACE_ID_ATTRIBUTE = "smartdoc.traceId"
+
+private fun traceIdFrom(request: HttpServletRequest): String =
+    (request.getAttribute(TRACE_ID_ATTRIBUTE) as? String)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: request.getHeader(SMARTDOC_TRACE_ID_HEADER)?.trim()?.takeIf { it.isNotBlank() }
+        ?: UUID.randomUUID().toString()
+
+@Service
+@Order(Ordered.HIGHEST_PRECEDENCE)
+class TraceIdFilter : OncePerRequestFilter() {
+    override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, filterChain: FilterChain) {
+        val traceId = request.getHeader(SMARTDOC_TRACE_ID_HEADER)?.trim()?.takeIf { it.isNotBlank() }
+            ?: UUID.randomUUID().toString()
+        request.setAttribute(TRACE_ID_ATTRIBUTE, traceId)
+        response.setHeader(SMARTDOC_TRACE_ID_HEADER, traceId)
+        MDC.put("traceId", traceId)
+        try {
+            filterChain.doFilter(request, response)
+        } finally {
+            MDC.remove("traceId")
+        }
+    }
 }
 
 @RestController
@@ -80,6 +115,12 @@ data class NotificationRuleCreateRequest(
     val keyword: String,
     val channel: String,
     val enabled: Boolean = true
+)
+
+data class NotificationRuleUpdateRequest(
+    val keyword: String? = null,
+    val channel: String? = null,
+    val enabled: Boolean? = null
 )
 
 data class NotificationRuleResponse(
@@ -183,6 +224,7 @@ interface NotificationRuleRepository : JpaRepository<NotificationRuleEntity, Str
     fun findByOwnerUserIdAndKeywordAndChannel(ownerUserId: String, keyword: String, channel: String): NotificationRuleEntity?
     fun findByOwnerUserIdAndEnabledTrue(ownerUserId: String): List<NotificationRuleEntity>
     fun findByOwnerUserId(ownerUserId: String): List<NotificationRuleEntity>
+    fun findByIdAndOwnerUserId(id: String, ownerUserId: String): NotificationRuleEntity?
 }
 
 @Service
@@ -237,6 +279,43 @@ class NotificationService(
         notificationRuleRepository.findByOwnerUserId(ownerUserId)
             .sortedWith(compareBy<NotificationRuleEntity> { it.keyword }.thenBy { it.channel })
             .map(::toRuleResponse)
+
+    fun updateRule(ruleId: String, request: NotificationRuleUpdateRequest, ownerUserId: String): NotificationRuleResponse {
+        val found = notificationRuleRepository.findByIdAndOwnerUserId(ruleId, ownerUserId)
+            ?: throw ResourceNotFoundException("notification rule not found: $ruleId")
+
+        val nextKeyword = request.keyword
+            ?.trim()
+            ?.also { require(it.isNotBlank()) { "keyword must not be blank" } }
+            ?: found.keyword
+
+        val nextChannel = request.channel
+            ?.trim()
+            ?.also { require(it.isNotBlank()) { "channel must not be blank" } }
+            ?.lowercase()
+            ?: found.channel
+
+        val nextEnabled = request.enabled ?: found.enabled
+
+        // Prevent violating (owner, keyword, channel) uniqueness when updating.
+        notificationRuleRepository.findByOwnerUserIdAndKeywordAndChannel(ownerUserId, nextKeyword, nextChannel)
+            ?.takeIf { it.id != found.id }
+            ?.let {
+                throw IllegalArgumentException("notification rule already exists for keyword=$nextKeyword channel=$nextChannel")
+            }
+
+        found.keyword = nextKeyword
+        found.channel = nextChannel
+        found.enabled = nextEnabled
+
+        return toRuleResponse(notificationRuleRepository.save(found))
+    }
+
+    fun deleteRule(ruleId: String, ownerUserId: String) {
+        val found = notificationRuleRepository.findByIdAndOwnerUserId(ruleId, ownerUserId)
+            ?: throw ResourceNotFoundException("notification rule not found: $ruleId")
+        notificationRuleRepository.delete(found)
+    }
 
     private fun ensureDefaultRulesExist(ownerUserId: String) {
         if (!notificationRuleRepository.existsByOwnerUserIdAndKeywordAndChannel(ownerUserId, "계약", "slack")) {
@@ -352,6 +431,26 @@ class NotificationController(
         require(request.channel.isNotBlank()) { "channel must not be blank" }
         return notificationService.createRule(request, ownerUserIdFrom(servletRequest))
     }
+
+    @PatchMapping("/rules/{id}")
+    fun updateRule(
+        @PathVariable id: String,
+        @RequestBody request: NotificationRuleUpdateRequest,
+        servletRequest: HttpServletRequest
+    ): NotificationRuleResponse {
+        require(id.isNotBlank()) { "id must not be blank" }
+        require(request.keyword != null || request.channel != null || request.enabled != null) {
+            "at least one field must be provided"
+        }
+        return notificationService.updateRule(id, request, ownerUserIdFrom(servletRequest))
+    }
+
+    @DeleteMapping("/rules/{id}")
+    fun deleteRule(@PathVariable id: String, servletRequest: HttpServletRequest): ResponseEntity<Void> {
+        require(id.isNotBlank()) { "id must not be blank" }
+        notificationService.deleteRule(id, ownerUserIdFrom(servletRequest))
+        return ResponseEntity.noContent().build()
+    }
 }
 
 @RestControllerAdvice
@@ -367,7 +466,7 @@ class ApiExceptionHandler {
                 path = request.requestURI,
                 code = "VALIDATION_ERROR",
                 message = ex.message ?: "validation failed",
-                traceId = UUID.randomUUID().toString()
+                traceId = traceIdFrom(request)
             )
         )
 
@@ -382,7 +481,7 @@ class ApiExceptionHandler {
                 path = request.requestURI,
                 code = "RESOURCE_NOT_FOUND",
                 message = ex.message ?: "resource not found",
-                traceId = UUID.randomUUID().toString()
+                traceId = traceIdFrom(request)
             )
         )
 
@@ -396,8 +495,8 @@ class ApiExceptionHandler {
                 timestamp = Instant.now(),
                 path = request.requestURI,
                 code = "INTERNAL_ERROR",
-                message = ex.message ?: "unexpected server error",
-                traceId = UUID.randomUUID().toString()
+                message = "unexpected server error",
+                traceId = traceIdFrom(request)
             )
         )
 }

@@ -8,6 +8,7 @@ import org.junit.jupiter.api.Test
 import org.mockito.Mockito.atLeastOnce
 import org.mockito.Mockito.reset
 import org.mockito.Mockito.verify
+import org.mockito.Mockito.times
 import org.mockito.Mockito.`when`
 import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMockMvc
@@ -111,7 +112,9 @@ class AnalysisApiTest {
         mockMvc.perform(get("/api/v1/analysis/jobs/$jobId"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.state").value("COMPLETED"))
-            .andExpect(jsonPath("$.resultSummary").value("로컬 분석이 완료되었습니다. 업로드된 텍스트 파일 내용 기준으로 계약, 검토, 알림, 긴급 키워드를 감지했습니다."))
+            .andExpect(jsonPath("$.resultSummary").value("로컬 분석이 완료되었습니다. 업로드된 파일 내용 기준으로 계약, 검토, 알림, 긴급 키워드를 감지했습니다."))
+            .andExpect(jsonPath("$.resultDetails.basis").value("CONTENT"))
+            .andExpect(jsonPath("$.resultDetails.highlights[0]").value(org.hamcrest.Matchers.containsString("detectedKeywords=")))
             .andExpect(jsonPath("$.riskScore").value(98))
             .andExpect(jsonPath("$.keywords[0]").value("계약"))
 
@@ -233,12 +236,13 @@ class AnalysisApiTest {
 
         mockMvc.perform(
             post("/api/v1/analysis/jobs")
+                .header("X-SmartDoc-Trace-Id", "trace-analysis-1")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""{"documentId":"$documentId"}""")
         )
             .andExpect(status().isNotFound)
             .andExpect(jsonPath("$.code").value("RESOURCE_NOT_FOUND"))
-            .andExpect(jsonPath("$.traceId").value(not(blankOrNullString())))
+            .andExpect(jsonPath("$.traceId").value("trace-analysis-1"))
     }
 
     @Test
@@ -270,5 +274,90 @@ class AnalysisApiTest {
                 .header("X-SmartDoc-User-Id", "bob-user")
         )
             .andExpect(status().isNotFound)
+    }
+
+    @Test
+    fun `reuses latest analysis job for same document and owner`() {
+        val documentId = "55555555-5555-5555-5555-555555555555"
+        `when`(documentLookupPort.exists(documentId, "local-dev-user")).thenReturn(true)
+        `when`(aiAnalysisPort.submit(AiAnalysisCommand(documentId))).thenReturn(
+            AiAnalysisResult(state = "QUEUED", provider = "local-stub")
+        )
+
+        val created1 = mockMvc.perform(
+            post("/api/v1/analysis/jobs")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"documentId":"$documentId"}""")
+        )
+            .andExpect(status().isCreated)
+            .andReturn()
+
+        val jobId1 = Regex(""""jobId":"([^"]+)"""")
+            .find(created1.response.contentAsString)
+            ?.groupValues
+            ?.get(1)
+            ?: error("jobId not found")
+
+        val created2 = mockMvc.perform(
+            post("/api/v1/analysis/jobs")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"documentId":"$documentId"}""")
+        )
+            .andExpect(status().isCreated)
+            .andReturn()
+
+        val jobId2 = Regex(""""jobId":"([^"]+)"""")
+            .find(created2.response.contentAsString)
+            ?.groupValues
+            ?.get(1)
+            ?: error("jobId not found")
+
+        check(jobId1 == jobId2) { "expected same jobId to be reused" }
+        check(analysisJobRepository.count() == 1L) { "expected exactly 1 analysis job row" }
+        verify(aiAnalysisPort, times(1)).submit(AiAnalysisCommand(documentId))
+    }
+
+    @Test
+    fun `create retries failed analysis job instead of creating a new one`() {
+        val documentId = "66666666-6666-6666-6666-666666666666"
+        `when`(documentLookupPort.exists(documentId, "local-dev-user")).thenReturn(true)
+        `when`(aiAnalysisPort.submit(AiAnalysisCommand(documentId))).thenReturn(
+            AiAnalysisResult(state = "QUEUED", provider = "local-stub")
+        )
+
+        val created = mockMvc.perform(
+            post("/api/v1/analysis/jobs")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"documentId":"$documentId"}""")
+        )
+            .andExpect(status().isCreated)
+            .andReturn()
+
+        val jobId = Regex(""""jobId":"([^"]+)"""")
+            .find(created.response.contentAsString)
+            ?.groupValues
+            ?.get(1)
+            ?: error("jobId not found")
+
+        analysisJobRepository.findById(jobId).get().also {
+            it.state = "FAILED"
+            it.errorCode = "LOCAL_ANALYSIS_FAILED"
+            it.errorMessage = "forced failure"
+            it.failedAt = Instant.now()
+            analysisJobRepository.save(it)
+        }
+
+        mockMvc.perform(
+            post("/api/v1/analysis/jobs")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"documentId":"$documentId"}""")
+        )
+            .andExpect(status().isCreated)
+            .andExpect(jsonPath("$.jobId").value(jobId))
+            .andExpect(jsonPath("$.state").value("QUEUED"))
+            .andExpect(jsonPath("$.errorCode").value(nullValue()))
+            .andExpect(jsonPath("$.failedAt").value(nullValue()))
+
+        check(analysisJobRepository.count() == 1L) { "expected no new analysis job row" }
     }
 }

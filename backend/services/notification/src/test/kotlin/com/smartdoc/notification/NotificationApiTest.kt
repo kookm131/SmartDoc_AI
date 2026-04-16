@@ -9,7 +9,9 @@ import org.springframework.boot.test.autoconfigure.web.servlet.AutoConfigureMock
 import org.springframework.boot.test.context.SpringBootTest
 import org.springframework.http.MediaType
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
@@ -72,12 +74,13 @@ class NotificationApiTest {
     fun `returns standard validation error`() {
         mockMvc.perform(
             post("/api/v1/notifications/dispatch")
+                .header("X-SmartDoc-Trace-Id", "trace-notif-1")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""{"documentId":"","channel":"slack","message":"review requested"}""")
         )
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
-            .andExpect(jsonPath("$.traceId").value(not(blankOrNullString())))
+            .andExpect(jsonPath("$.traceId").value("trace-notif-1"))
     }
 
     @Test
@@ -107,6 +110,39 @@ class NotificationApiTest {
         check(notificationRuleRepository.findAll().size == 1) {
             "duplicate rule should update existing row"
         }
+    }
+
+    @Test
+    fun `updates and deletes notification rule`() {
+        val created = mockMvc.perform(
+            post("/api/v1/notifications/rules")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"keyword":"계약","channel":"slack","enabled":true}""")
+        )
+            .andExpect(status().isCreated)
+            .andReturn()
+
+        val ruleId = Regex(""""ruleId":"([^"]+)"""")
+            .find(created.response.contentAsString)
+            ?.groupValues
+            ?.get(1)
+            ?: error("ruleId not found")
+
+        mockMvc.perform(
+            patch("/api/v1/notifications/rules/$ruleId")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"enabled":false}""")
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.ruleId").value(ruleId))
+            .andExpect(jsonPath("$.enabled").value(false))
+
+        mockMvc.perform(delete("/api/v1/notifications/rules/$ruleId"))
+            .andExpect(status().isNoContent)
+
+        mockMvc.perform(get("/api/v1/notifications/rules"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.length()").value(0))
     }
 
     @Test

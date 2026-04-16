@@ -13,12 +13,15 @@ import org.springframework.mock.web.MockMultipartFile
 import org.springframework.test.context.DynamicPropertyRegistry
 import org.springframework.test.context.DynamicPropertySource
 import org.springframework.test.web.servlet.MockMvc
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.delete
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multipart
+import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.patch
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.content
+import org.springframework.test.web.servlet.result.MockMvcResultMatchers.header
 import com.sun.net.httpserver.HttpExchange
 import com.sun.net.httpserver.HttpServer
 import java.net.InetSocketAddress
@@ -205,6 +208,46 @@ class GatewayProxyApiTest {
     }
 
     @Test
+    fun `routes notification rule update through gateway`() {
+        upstreamServer.respond(
+            "PATCH",
+            "/api/v1/notifications/rules/rule-1",
+            200,
+            """{"ruleId":"rule-1","keyword":"계약","channel":"slack","enabled":false}"""
+        )
+
+        mockMvc.perform(
+            patch("/api/v1/notifications/rules/rule-1")
+                .header("Authorization", bearerToken())
+                .contentType(MediaType.APPLICATION_JSON)
+                .content("""{"enabled":false}""")
+        )
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.ruleId").value("rule-1"))
+            .andExpect(jsonPath("$.enabled").value(false))
+
+        upstreamServer.assertLastRequest("PATCH", "/api/v1/notifications/rules/rule-1")
+    }
+
+    @Test
+    fun `routes notification rule delete through gateway`() {
+        upstreamServer.respond(
+            "DELETE",
+            "/api/v1/notifications/rules/rule-1",
+            204,
+            ""
+        )
+
+        mockMvc.perform(
+            delete("/api/v1/notifications/rules/rule-1")
+                .header("Authorization", bearerToken())
+        )
+            .andExpect(status().isNoContent)
+
+        upstreamServer.assertLastRequest("DELETE", "/api/v1/notifications/rules/rule-1")
+    }
+
+    @Test
     fun `returns gateway upstream error when upstream is unavailable`() {
         upstreamServer.stop()
 
@@ -232,10 +275,14 @@ class GatewayProxyApiTest {
 
     @Test
     fun `rejects protected gateway route without token`() {
-        mockMvc.perform(get("/api/v1/documents"))
+        mockMvc.perform(
+            get("/api/v1/documents")
+                .header("X-SmartDoc-Trace-Id", "trace-gw-1")
+        )
             .andExpect(status().isUnauthorized)
             .andExpect(jsonPath("$.code").value("AUTHENTICATION_REQUIRED"))
-            .andExpect(jsonPath("$.traceId").value(not(blankOrNullString())))
+            .andExpect(jsonPath("$.traceId").value("trace-gw-1"))
+            .andExpect(header().string("X-SmartDoc-Trace-Id", "trace-gw-1"))
     }
 
     private fun bearerToken(): String {

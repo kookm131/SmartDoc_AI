@@ -17,6 +17,7 @@ import {
   getCurrentUser,
   getDocumentById,
   getStoredAccessToken,
+  listArchivedDocuments,
   listDocuments,
   listNotificationEvents,
   listNotificationRules,
@@ -82,6 +83,7 @@ export default function App() {
   const [checkingAuth, setCheckingAuth] = useState(true);
   const [submittingAuth, setSubmittingAuth] = useState(false);
   const [activeTab, setActiveTab] = useState('list');
+  const [documentListMode, setDocumentListMode] = useState<'active' | 'archived'>('active');
   const [documents, setDocuments] = useState<DocumentRecord[]>([]);
   const [loadingDocuments, setLoadingDocuments] = useState(true);
   const [submittingDocument, setSubmittingDocument] = useState(false);
@@ -111,7 +113,7 @@ export default function App() {
   const loadDocuments = async () => {
     setLoadingDocuments(true);
     try {
-      const response = await listDocuments();
+      const response = documentListMode === 'archived' ? await listArchivedDocuments() : await listDocuments();
       setDocuments(response);
       setApiError(null);
 
@@ -153,7 +155,7 @@ export default function App() {
     if (currentUser) {
       void loadDocuments();
     }
-  }, [currentUser]);
+  }, [currentUser, documentListMode]);
 
   const handleLogin = async (input: LoginInput) => {
     setSubmittingAuth(true);
@@ -195,6 +197,7 @@ export default function App() {
       setNotificationEvents([]);
       setNotificationRules([]);
       setActiveTab('list');
+      setDocumentListMode('active');
     }
   };
 
@@ -445,9 +448,15 @@ export default function App() {
             documents={documents}
             loading={loadingDocuments}
             submitting={submittingDocument}
+            mode={documentListMode}
+            onModeChange={(mode) => {
+              setDocumentListMode(mode);
+              setSelectedDoc(null);
+              setActiveTab('list');
+            }}
             onDocumentClick={(doc) => void handleDocumentClick(doc)}
             onCreateDocument={handleCreateDocument}
-            onArchiveDocument={handleArchiveDocument}
+            onArchiveDocument={documentListMode === 'active' ? handleArchiveDocument : undefined}
             latestError={apiError}
           />
           <DashboardCards stats={dashboardStats} />

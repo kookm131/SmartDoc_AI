@@ -50,11 +50,42 @@ export interface AnalysisJobRecord {
   createdAt: string;
   analysisProvider: string;
   resultSummary?: string | null;
+  resultDetails?: AnalysisResultDetails | null;
   riskScore?: number | null;
   keywords: string[];
   errorCode?: string | null;
   errorMessage?: string | null;
   failedAt?: string | null;
+}
+
+export interface AnalysisExtractionDetails {
+  status: 'SUCCESS' | 'EMPTY' | 'UNAVAILABLE' | string;
+  contentType?: string | null;
+  textChars?: number | null;
+  note?: string | null;
+}
+
+export interface AnalysisStructuredSummary {
+  title: string;
+  bullets: string[];
+}
+
+export interface AnalysisRiskDetails {
+  baseScore: number;
+  keywordScore: number;
+  urgentScore: number;
+  cappedScore: number;
+  level: 'LOW' | 'MEDIUM' | 'HIGH' | string;
+}
+
+export interface AnalysisResultDetails {
+  basis: 'CONTENT' | 'METADATA' | string;
+  completeness?: 'FULL' | 'PARTIAL' | string;
+  extraction?: AnalysisExtractionDetails | null;
+  summary?: AnalysisStructuredSummary | null;
+  risk?: AnalysisRiskDetails | null;
+  highlights?: string[];
+  signals?: string[];
 }
 
 export interface NotificationEventRecord {

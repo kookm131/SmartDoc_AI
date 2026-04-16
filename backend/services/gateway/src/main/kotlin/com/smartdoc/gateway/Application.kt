@@ -15,6 +15,7 @@ import org.springframework.stereotype.Service
 import org.springframework.util.StreamUtils
 import org.springframework.util.MultiValueMap
 import org.springframework.util.LinkedMultiValueMap
+import org.springframework.web.bind.annotation.DeleteMapping
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PatchMapping
 import org.springframework.web.bind.annotation.PathVariable
@@ -108,6 +109,12 @@ class GatewayProxy(
     fun postNotification(path: String, body: String, request: HttpServletRequest): ResponseEntity<String> =
         proxy(HttpMethod.POST, UpstreamTarget.NOTIFICATION, path, body, request)
 
+    fun patchNotification(path: String, body: String, request: HttpServletRequest): ResponseEntity<String> =
+        proxy(HttpMethod.PATCH, UpstreamTarget.NOTIFICATION, path, body, request)
+
+    fun deleteNotification(path: String, request: HttpServletRequest): ResponseEntity<String> =
+        proxy(HttpMethod.DELETE, UpstreamTarget.NOTIFICATION, path, null, request)
+
     fun getNotification(path: String, request: HttpServletRequest): ResponseEntity<String> =
         proxy(HttpMethod.GET, UpstreamTarget.NOTIFICATION, path, null, request)
 
@@ -141,7 +148,7 @@ class GatewayProxy(
 
         return try {
             requestSpec.exchange { _, response ->
-                val responseBody = StreamUtils.copyToString(response.body, StandardCharsets.UTF_8)
+                val responseBody = response.body?.let { StreamUtils.copyToString(it, StandardCharsets.UTF_8) } ?: ""
                 ResponseEntity.status(response.statusCode)
                     .contentType(response.headers.contentType ?: MediaType.APPLICATION_JSON)
                     .body(responseBody)
@@ -174,7 +181,7 @@ class GatewayProxy(
                 .withUserHeaders(request)
                 .body(body)
                 .exchange { _, response ->
-                    val responseBody = StreamUtils.copyToString(response.body, StandardCharsets.UTF_8)
+                    val responseBody = response.body?.let { StreamUtils.copyToString(it, StandardCharsets.UTF_8) } ?: ""
                     ResponseEntity.status(response.statusCode)
                         .contentType(response.headers.contentType ?: MediaType.APPLICATION_JSON)
                         .body(responseBody)
@@ -197,6 +204,12 @@ class GatewayProxy(
             header(SMARTDOC_USER_ID_HEADER, principal.userId)
             header(SMARTDOC_USER_EMAIL_HEADER, principal.email)
         }
+        header(
+            SMARTDOC_TRACE_ID_HEADER,
+            (request.getAttribute(TRACE_ID_ATTRIBUTE) as? String)
+                ?: request.getHeader(SMARTDOC_TRACE_ID_HEADER)
+                ?: UUID.randomUUID().toString()
+        )
         return this
     }
 
@@ -205,12 +218,15 @@ class GatewayProxy(
         request: HttpServletRequest,
         message: String
     ): ResponseEntity<String> {
+        val traceId = (request.getAttribute(TRACE_ID_ATTRIBUTE) as? String)
+            ?: request.getHeader(SMARTDOC_TRACE_ID_HEADER)
+            ?: UUID.randomUUID().toString()
         val response = ApiErrorResponse(
             timestamp = Instant.now(),
             path = request.requestURI,
             code = "UPSTREAM_${target.name}_ERROR",
             message = message,
-            traceId = UUID.randomUUID().toString()
+            traceId = traceId
         )
         return ResponseEntity.status(HttpStatus.BAD_GATEWAY)
             .contentType(MediaType.APPLICATION_JSON)
@@ -320,4 +336,12 @@ class NotificationProxyController(
     @PostMapping("/rules")
     fun createRule(@RequestBody body: String, request: HttpServletRequest): ResponseEntity<String> =
         gatewayProxy.postNotification("/api/v1/notifications/rules", body, request)
+
+    @PatchMapping("/rules/{id}")
+    fun updateRule(@PathVariable id: String, @RequestBody body: String, request: HttpServletRequest): ResponseEntity<String> =
+        gatewayProxy.patchNotification("/api/v1/notifications/rules/$id", body, request)
+
+    @DeleteMapping("/rules/{id}")
+    fun deleteRule(@PathVariable id: String, request: HttpServletRequest): ResponseEntity<String> =
+        gatewayProxy.deleteNotification("/api/v1/notifications/rules/$id", request)
 }

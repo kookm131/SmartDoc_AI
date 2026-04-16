@@ -6,10 +6,17 @@ import jakarta.persistence.Id
 import jakarta.persistence.PrePersist
 import jakarta.persistence.PreUpdate
 import jakarta.persistence.Table
+import jakarta.servlet.FilterChain
 import jakarta.servlet.http.HttpServletRequest
+import jakarta.servlet.http.HttpServletResponse
+import org.slf4j.MDC
+import org.apache.pdfbox.Loader
+import org.apache.pdfbox.text.PDFTextStripper
 import org.springframework.beans.factory.annotation.Value
 import org.springframework.boot.autoconfigure.SpringBootApplication
 import org.springframework.boot.runApplication
+import org.springframework.core.Ordered
+import org.springframework.core.annotation.Order
 import org.springframework.context.annotation.Profile
 import org.springframework.data.jpa.repository.JpaRepository
 import org.springframework.http.HttpStatus
@@ -26,17 +33,64 @@ import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.ResponseStatus
 import org.springframework.web.bind.annotation.RestController
 import org.springframework.web.bind.annotation.RestControllerAdvice
+import org.springframework.web.filter.OncePerRequestFilter
+import org.springframework.web.multipart.MaxUploadSizeExceededException
+import org.springframework.web.multipart.MultipartException
 import org.springframework.web.multipart.MultipartFile
+import software.amazon.awssdk.auth.credentials.AwsBasicCredentials
+import software.amazon.awssdk.auth.credentials.DefaultCredentialsProvider
+import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider
+import software.amazon.awssdk.core.ResponseBytes
+import software.amazon.awssdk.core.sync.RequestBody as AwsRequestBody
+import software.amazon.awssdk.regions.Region
+import software.amazon.awssdk.services.s3.S3Client
+import software.amazon.awssdk.services.s3.S3Configuration
+import software.amazon.awssdk.services.s3.model.CreateBucketRequest
+import software.amazon.awssdk.services.s3.model.GetObjectRequest
+import software.amazon.awssdk.services.s3.model.HeadBucketRequest
+import software.amazon.awssdk.services.s3.model.HeadObjectRequest
+import software.amazon.awssdk.services.s3.model.NoSuchBucketException
+import software.amazon.awssdk.services.s3.model.NoSuchKeyException
+import software.amazon.awssdk.services.s3.model.PutObjectRequest
+import java.net.URI
 import java.nio.file.Files
 import java.nio.file.Path
 import java.time.Instant
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 @SpringBootApplication
 class Application
 
 fun main(args: Array<String>) {
     runApplication<Application>(*args)
+}
+
+private const val SMARTDOC_TRACE_ID_HEADER = "X-SmartDoc-Trace-Id"
+private const val TRACE_ID_ATTRIBUTE = "smartdoc.traceId"
+
+private fun traceIdFrom(request: HttpServletRequest): String =
+    (request.getAttribute(TRACE_ID_ATTRIBUTE) as? String)
+        ?.trim()
+        ?.takeIf { it.isNotBlank() }
+        ?: request.getHeader(SMARTDOC_TRACE_ID_HEADER)?.trim()?.takeIf { it.isNotBlank() }
+        ?: UUID.randomUUID().toString()
+
+@Service
+@Order(Ordered.HIGHEST_PRECEDENCE)
+class TraceIdFilter : OncePerRequestFilter() {
+    override fun doFilterInternal(request: HttpServletRequest, response: HttpServletResponse, filterChain: FilterChain) {
+        val traceId = request.getHeader(SMARTDOC_TRACE_ID_HEADER)?.trim()?.takeIf { it.isNotBlank() }
+            ?: UUID.randomUUID().toString()
+        request.setAttribute(TRACE_ID_ATTRIBUTE, traceId)
+        response.setHeader(SMARTDOC_TRACE_ID_HEADER, traceId)
+        MDC.put("traceId", traceId)
+        try {
+            filterChain.doFilter(request, response)
+        } finally {
+            MDC.remove("traceId")
+        }
+    }
 }
 
 @RestController
@@ -123,6 +177,7 @@ class LocalObjectStorageAdapter(
     localUploadDir: String
 ) : ObjectStoragePort {
     private val uploadRoot: Path = Path.of(localUploadDir).toAbsolutePath().normalize()
+    private val pdfMaxChars: Int = 20_000
 
     override fun store(command: ObjectStoreCommand): ObjectStoreResult {
         val normalizedKey = command.fileKey.trim().ifBlank {
@@ -154,16 +209,20 @@ class LocalObjectStorageAdapter(
     }
 
     override fun readText(fileKey: String, contentType: String?): ObjectContentResult {
-        if (contentType != "text/plain") {
-            return ObjectContentResult(textContent = null)
-        }
-
         val target = resolveLocalPath(fileKey)
         if (!Files.exists(target)) {
             return ObjectContentResult(textContent = null)
         }
 
-        return ObjectContentResult(textContent = Files.readString(target))
+        if (contentType == "text/plain") {
+            return ObjectContentResult(textContent = Files.readString(target))
+        }
+
+        if (contentType == "application/pdf") {
+            return ObjectContentResult(textContent = extractPdfTextFromPath(target, pdfMaxChars))
+        }
+
+        return ObjectContentResult(textContent = null)
     }
 
     override fun resolveObjectUrl(fileKey: String): String = "local://${fileKey.trim()}"
@@ -179,37 +238,173 @@ class LocalObjectStorageAdapter(
         require(target.startsWith(uploadRoot)) { "fileKey must stay within local upload directory" }
         return target
     }
+
 }
 
 @Service
 @Profile("aws")
-class AwsObjectStorageAdapter : ObjectStoragePort {
+class AwsObjectStorageAdapter(
+    @Value("\${SMARTDOC_S3_BUCKET:smartdoc-local}")
+    private val bucket: String,
+    @Value("\${SMARTDOC_AWS_REGION:us-east-1}")
+    private val region: String,
+    @Value("\${SMARTDOC_AWS_S3_ENDPOINT:}")
+    private val s3Endpoint: String,
+    @Value("\${SMARTDOC_AWS_S3_PATH_STYLE:true}")
+    private val pathStyleEnabled: Boolean,
+    @Value("\${AWS_ACCESS_KEY_ID:}")
+    private val accessKeyId: String,
+    @Value("\${AWS_SECRET_ACCESS_KEY:}")
+    private val secretAccessKey: String
+) : ObjectStoragePort {
+    private val pdfMaxChars: Int = 20_000
+    private val bucketChecked = AtomicBoolean(false)
+
+    private val s3: S3Client = run {
+        val builder = S3Client.builder()
+            .region(Region.of(region.trim().ifBlank { "us-east-1" }))
+            .serviceConfiguration(
+                S3Configuration.builder()
+                    .pathStyleAccessEnabled(pathStyleEnabled || s3Endpoint.isNotBlank())
+                    .build()
+            )
+
+        val endpoint = s3Endpoint.trim()
+        if (endpoint.isNotBlank()) {
+            builder.endpointOverride(URI.create(endpoint))
+        }
+
+        if (accessKeyId.isNotBlank() && secretAccessKey.isNotBlank()) {
+            builder.credentialsProvider(
+                StaticCredentialsProvider.create(
+                    AwsBasicCredentials.create(accessKeyId.trim(), secretAccessKey.trim())
+                )
+            )
+        } else {
+            builder.credentialsProvider(DefaultCredentialsProvider.create())
+        }
+
+        builder.build()
+    }
+
     override fun store(command: ObjectStoreCommand): ObjectStoreResult {
         val normalizedKey = command.fileKey.trim().ifBlank {
             "uploads/${command.filename.trim()}"
         }
         return ObjectStoreResult(
             fileKey = normalizedKey,
-            objectUrl = "s3://smartdoc-placeholder/$normalizedKey"
+            objectUrl = resolveObjectUrl(normalizedKey)
         )
     }
 
     override fun storeFile(command: ObjectFileStoreCommand): ObjectStoreResult {
         val normalizedKey = command.fileKey?.trim()?.ifBlank { null } ?: "uploads/${command.filename.trim()}"
+        ensureBucketExistsIfNeeded()
+
+        s3.putObject(
+            PutObjectRequest.builder()
+                .bucket(bucketName())
+                .key(normalizedKey)
+                .contentType(command.contentType?.trim()?.ifBlank { null })
+                .build(),
+            AwsRequestBody.fromBytes(command.bytes)
+        )
         return ObjectStoreResult(
             fileKey = normalizedKey,
-            objectUrl = "s3://smartdoc-placeholder/$normalizedKey"
+            objectUrl = resolveObjectUrl(normalizedKey)
         )
     }
 
-    override fun readText(fileKey: String, contentType: String?): ObjectContentResult =
-        ObjectContentResult(textContent = null)
+    override fun readText(fileKey: String, contentType: String?): ObjectContentResult {
+        val key = fileKey.trim()
+        if (key.isBlank()) return ObjectContentResult(textContent = null)
+
+        return try {
+            s3.headObject(
+                HeadObjectRequest.builder()
+                    .bucket(bucketName())
+                    .key(key)
+                    .build()
+            )
+
+            val bytes: ResponseBytes<*> = s3.getObjectAsBytes(
+                GetObjectRequest.builder()
+                    .bucket(bucketName())
+                    .key(key)
+                    .build()
+            )
+
+            when (contentType?.trim()) {
+                "text/plain" -> ObjectContentResult(textContent = bytes.asUtf8String())
+                "application/pdf" -> ObjectContentResult(textContent = extractPdfTextFromBytes(bytes.asByteArray(), pdfMaxChars))
+                else -> ObjectContentResult(textContent = null)
+            }
+        } catch (_: NoSuchKeyException) {
+            ObjectContentResult(textContent = null)
+        } catch (_: NoSuchBucketException) {
+            ObjectContentResult(textContent = null)
+        } catch (_: Exception) {
+            ObjectContentResult(textContent = null)
+        }
+    }
 
     override fun resolveObjectUrl(fileKey: String): String =
-        "s3://smartdoc-placeholder/${fileKey.trim()}"
+        "s3://${bucketName()}/${fileKey.trim()}"
+
+    private fun bucketName(): String = bucket.trim().ifBlank { "smartdoc-local" }
+
+    private fun ensureBucketExistsIfNeeded() {
+        if (bucketChecked.get()) return
+        synchronized(bucketChecked) {
+            if (bucketChecked.get()) return
+
+            val b = bucketName()
+            try {
+                s3.headBucket(HeadBucketRequest.builder().bucket(b).build())
+            } catch (_: Exception) {
+                try {
+                    s3.createBucket(CreateBucketRequest.builder().bucket(b).build())
+                } catch (_: Exception) {
+                    // ignore
+                }
+            } finally {
+                bucketChecked.set(true)
+            }
+        }
+    }
 }
 
 class ResourceNotFoundException(message: String) : RuntimeException(message)
+
+private fun extractPdfTextFromPath(path: Path, maxChars: Int): String? =
+    try {
+        Loader.loadPDF(path.toFile()).use { doc ->
+            val stripper = PDFTextStripper().apply { sortByPosition = true }
+            val raw = stripper.getText(doc)?.trim()
+            when {
+                raw.isNullOrBlank() -> null
+                raw.length <= maxChars -> raw
+                else -> raw.substring(0, maxChars)
+            }
+        }
+    } catch (_: Exception) {
+        null
+    }
+
+private fun extractPdfTextFromBytes(bytes: ByteArray, maxChars: Int): String? =
+    try {
+        Loader.loadPDF(bytes).use { doc ->
+            val stripper = PDFTextStripper().apply { sortByPosition = true }
+            val raw = stripper.getText(doc)?.trim()
+            when {
+                raw.isNullOrBlank() -> null
+                raw.length <= maxChars -> raw
+                else -> raw.substring(0, maxChars)
+            }
+        }
+    } catch (_: Exception) {
+        null
+    }
 
 private const val SMARTDOC_USER_ID_HEADER = "X-SmartDoc-User-Id"
 private const val LOCAL_DEV_OWNER_USER_ID = "local-dev-user"
@@ -515,7 +710,7 @@ class ApiExceptionHandler {
                 path = request.requestURI,
                 code = "VALIDATION_ERROR",
                 message = ex.message ?: "validation failed",
-                traceId = UUID.randomUUID().toString()
+                traceId = traceIdFrom(request)
             )
         )
 
@@ -530,7 +725,22 @@ class ApiExceptionHandler {
                 path = request.requestURI,
                 code = "RESOURCE_NOT_FOUND",
                 message = ex.message ?: "resource not found",
-                traceId = UUID.randomUUID().toString()
+                traceId = traceIdFrom(request)
+            )
+        )
+
+    @ExceptionHandler(MaxUploadSizeExceededException::class, MultipartException::class)
+    fun handleMultipartError(
+        ex: Exception,
+        request: HttpServletRequest
+    ): ResponseEntity<ApiErrorResponse> =
+        ResponseEntity.status(HttpStatus.BAD_REQUEST).body(
+            ApiErrorResponse(
+                timestamp = Instant.now(),
+                path = request.requestURI,
+                code = "VALIDATION_ERROR",
+                message = "file size must be less than or equal to ${System.getenv("SMARTDOC_MAX_UPLOAD_BYTES") ?: "10485760"} bytes",
+                traceId = traceIdFrom(request)
             )
         )
 
@@ -544,8 +754,8 @@ class ApiExceptionHandler {
                 timestamp = Instant.now(),
                 path = request.requestURI,
                 code = "INTERNAL_ERROR",
-                message = ex.message ?: "unexpected server error",
-                traceId = UUID.randomUUID().toString()
+                message = "unexpected server error",
+                traceId = traceIdFrom(request)
             )
         )
 }

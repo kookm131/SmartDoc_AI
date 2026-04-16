@@ -3,6 +3,7 @@
 ## Gateway
 - `GET /`
 - `GET /api/v1/health`
+- `GET /actuator/health`
 - `POST /api/v1/auth/signup`
 - `POST /api/v1/auth/login`
 - `POST /api/v1/auth/logout`
@@ -22,6 +23,8 @@
 - `GET /api/v1/notifications/events/{id}`
 - `GET /api/v1/notifications/rules`
 - `POST /api/v1/notifications/rules`
+- `PATCH /api/v1/notifications/rules/{id}`
+- `DELETE /api/v1/notifications/rules/{id}`
 
 Gateway는 프론트엔드의 기본 API 진입점이며, document/analysis/notification 서비스로 요청을 프록시합니다.
 Auth v1은 별도 서비스 없이 Gateway 내부 H2(in-memory)에 사용자 정보를 저장합니다.
@@ -242,7 +245,12 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 ```
 
 ### `GET /api/v1/documents/{id}/content` 응답 예시 (`200 OK`)
-`text/plain` 업로드 파일이면 로컬 분석용 텍스트 내용을 반환합니다. PDF는 아직 실제 파싱하지 않으므로 `textContent`가 `null`입니다.
+`text/plain` 업로드 파일이면 로컬 분석용 텍스트 내용을 반환합니다.
+
+`application/pdf`도 로컬 개발 편의를 위해 best-effort로 텍스트를 추출해 `textContent`로 반환합니다(PDFBox). 다만 아래 경우에는 `textContent`가 `null`일 수 있습니다.
+- PDF 텍스트 추출 실패(손상된 PDF/암호화/파싱 오류 등)
+- 추출 가능한 텍스트가 없거나(스캔 이미지 PDF 등) 공백뿐인 경우
+- 허용 범위(서비스 내부 제한) 때문에 잘려서 결과가 비어 보이는 경우
 
 ```json
 {
@@ -335,7 +343,7 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 
 로컬 저장소:
 - 현재 `analysis` 서비스는 기본 H2(in-memory) 또는 `mariadb` 프로필의 VM MariaDB로 `analysis_jobs`를 저장합니다.
-- `analysis_jobs` 최소 필드: `id`, `owner_user_id`, `document_id`, `state`, `analysis_provider`, `result_summary`, `risk_score`, `keywords`, `error_code`, `error_message`, `failed_at`, `notification_dispatched_at`, `created_at`
+- `analysis_jobs` 최소 필드: `id`, `owner_user_id`, `document_id`, `state`, `analysis_provider`, `result_summary`, `result_details_json`, `risk_score`, `keywords`, `error_code`, `error_message`, `failed_at`, `notification_dispatched_at`, `created_at`
 - `keyword_detections` 최소 필드: `id`, `analysis_job_id`, `keyword`, `confidence`, `created_at`
 - 로컬 stub 상태 전이: `QUEUED` -> `PROCESSING` -> `COMPLETED` 또는 `FAILED`
 
@@ -357,6 +365,7 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
   "createdAt": "2026-04-14T08:00:00Z",
   "analysisProvider": "local-stub",
   "resultSummary": null,
+  "resultDetails": null,
   "riskScore": null,
   "keywords": [],
   "errorCode": null,
@@ -368,8 +377,9 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 주의:
 - `documentId`가 실제로 존재하지 않으면 `404 RESOURCE_NOT_FOUND`를 반환합니다.
 - 생성된 Job은 DB에 저장되며, `GET /api/v1/analysis/jobs/{id}`는 DB에서 조회합니다.
-- 로컬 분석은 `text/plain` 문서의 업로드 내용을 읽어 `계약`, `검토`, `알림`, `긴급`, `위험`, `청구`, `개인정보` 키워드를 감지합니다.
-- PDF 등 텍스트를 읽을 수 없는 문서는 filename/fileKey 기반 메타데이터 fallback으로 분석합니다.
+- `POST /api/v1/analysis/jobs`는 `(ownerUserId, documentId)` 기준 최신 Job을 재사용합니다(중복 생성 방지). 최신 Job이 `FAILED`면 자동으로 retry 처리되어 같은 `jobId`가 `QUEUED`로 초기화됩니다.
+- 로컬 분석은 `text/plain` 문서의 업로드 내용을 읽어 `계약`, `검토`, `알림`, `긴급`, `위험`, `청구`, `개인정보`, `해지`, `위약금`, `자동갱신`, `수수료`, `지급`, `기한`, `비밀유지`, `SLA` 키워드를 감지합니다.
+- 로컬 분석은 `text/plain` 뿐 아니라 `application/pdf`도 (best-effort) 텍스트를 추출해 키워드 감지를 수행합니다. 추출에 실패하면 filename/fileKey 기반 메타데이터 fallback으로 분석합니다.
 - 분석 완료 시 키워드는 `keyword_detections`에 저장되며, 중복 조회해도 같은 Job/키워드는 다시 저장하지 않습니다.
 - `analysis` 상태 전이에 따라 `document` 상태도 `ANALYSIS_QUEUED`, `ANALYSIS_PROCESSING`, `ANALYSIS_COMPLETED`, `ANALYSIS_FAILED`로 갱신합니다.
 - 로컬 분석에서 파일명/fileKey/텍스트 내용에 `분석실패`, `fail`, `analysis-fail`, `force-fail`이 포함되면 실패 검증용으로 `FAILED` 상태가 됩니다.
@@ -387,6 +397,33 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
   "createdAt": "2026-04-14T08:00:00Z",
   "analysisProvider": "local-stub",
   "resultSummary": "로컬 분석이 완료되었습니다. 업로드된 텍스트 파일 내용 기준으로 계약, 검토, 알림, 긴급 키워드를 감지했습니다.",
+  "resultDetails": {
+    "basis": "CONTENT",
+    "completeness": "FULL",
+    "extraction": {
+      "status": "SUCCESS",
+      "contentType": "text/plain",
+      "textChars": 42,
+      "note": null
+    },
+    "summary": {
+      "title": "분석 요약",
+      "bullets": [
+        "분석 기준: 업로드된 파일 내용",
+        "감지 키워드: 계약, 검토, 알림, 긴급",
+        "위험 점수: 98점(HIGH)"
+      ]
+    },
+    "risk": {
+      "baseScore": 30,
+      "keywordScore": 48,
+      "urgentScore": 20,
+      "cappedScore": 98,
+      "level": "HIGH"
+    },
+    "highlights": ["detectedKeywords=...", "riskScore=..."],
+    "signals": ["keyword:계약", "keyword:검토"]
+  },
   "riskScore": 98,
   "keywords": ["계약", "검토", "알림", "긴급"],
   "errorCode": null,
@@ -439,6 +476,8 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 - `GET /api/v1/notifications/events/{id}`
 - `GET /api/v1/notifications/rules`
 - `POST /api/v1/notifications/rules`
+- `PATCH /api/v1/notifications/rules/{id}`
+- `DELETE /api/v1/notifications/rules/{id}`
 
 로컬 저장소:
 - 현재 `notification` 서비스는 기본 H2(in-memory) 또는 `mariadb` 프로필의 VM MariaDB로 `notification_events`, `notification_rules`를 저장합니다.
@@ -532,8 +571,38 @@ curl -X POST http://localhost:8081/api/v1/documents/upload \
 }
 ```
 
+### `PATCH /api/v1/notifications/rules/{id}` 요청/응답 예시
+필드 일부만 수정할 수 있습니다(예: 비활성화는 `{"enabled":false}`).
+
+요청:
+```json
+{
+  "enabled": false
+}
+```
+
+응답 (`200 OK`):
+```json
+{
+  "ruleId": "uuid",
+  "keyword": "계약",
+  "channel": "slack",
+  "enabled": false,
+  "createdAt": "2026-04-14T09:00:00Z"
+}
+```
+
+### `DELETE /api/v1/notifications/rules/{id}` 응답 예시
+성공 시 `204 No Content`를 반환합니다.
+
 ## 오류 모델
 - 공통 필드: `timestamp`, `path`, `code`, `message`, `traceId`
-- 기본 코드: `VALIDATION_ERROR`, `RESOURCE_NOT_FOUND`, `UPSTREAM_DOCUMENT_ERROR`, `UPSTREAM_AI_ERROR`, `INTERNAL_ERROR`
-- `UPSTREAM_DOCUMENT_ERROR`: `analysis`가 `document` 서비스에 연결하지 못했을 때 `502 Bad Gateway`로 반환합니다.
-- 모든 서비스는 예상하지 못한 오류를 `INTERNAL_ERROR` 형태로 반환합니다.
+- `traceId`는 `X-SmartDoc-Trace-Id` 요청 헤더로 주입할 수 있으며, Gateway/서비스 간 호출에서도 동일 값이 전파됩니다(미지정 시 Gateway가 생성 후 응답 헤더로 반환).
+- 공통 코드(주요):
+  - `VALIDATION_ERROR` (`400`): 요청 값 검증 실패
+  - `AUTHENTICATION_REQUIRED` (`401`, gateway): 인증 필요(토큰 없음/만료 등)
+  - `RESOURCE_NOT_FOUND` (`404`): 리소스 없음(소유자 불일치 포함)
+  - `UPSTREAM_DOCUMENT_ERROR` (`502`, analysis): `analysis -> document` 호출 실패
+  - `UPSTREAM_DOCUMENT_ERROR` / `UPSTREAM_ANALYSIS_ERROR` / `UPSTREAM_NOTIFICATION_ERROR` (`502`, gateway): 프록시 upstream 호출 실패
+  - `INTERNAL_ERROR` (`500`): 예상하지 못한 서버 오류
+- `INTERNAL_ERROR`의 `message`는 내부 예외 메시지를 노출하지 않고 고정된 문구를 반환합니다.

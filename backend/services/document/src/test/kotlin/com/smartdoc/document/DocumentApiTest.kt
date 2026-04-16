@@ -1,7 +1,13 @@
 package com.smartdoc.document
 
+import org.apache.pdfbox.pdmodel.PDDocument
+import org.apache.pdfbox.pdmodel.PDPage
+import org.apache.pdfbox.pdmodel.PDPageContentStream
+import org.apache.pdfbox.pdmodel.font.PDType1Font
+import org.apache.pdfbox.pdmodel.font.Standard14Fonts
 import org.hamcrest.Matchers.not
 import org.hamcrest.Matchers.blankOrNullString
+import org.hamcrest.Matchers.containsString
 import org.hamcrest.Matchers.nullValue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
@@ -17,6 +23,7 @@ import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.multi
 import org.springframework.test.web.servlet.request.MockMvcRequestBuilders.post
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.jsonPath
 import org.springframework.test.web.servlet.result.MockMvcResultMatchers.status
+import java.io.ByteArrayOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
 
@@ -78,12 +85,13 @@ class DocumentApiTest {
     fun `returns standard validation error`() {
         mockMvc.perform(
             post("/api/v1/documents")
+                .header("X-SmartDoc-Trace-Id", "trace-doc-1")
                 .contentType(MediaType.APPLICATION_JSON)
                 .content("""{"filename":"","fileKey":"uploads/contract.pdf"}""")
         )
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
-            .andExpect(jsonPath("$.traceId").value(not(blankOrNullString())))
+            .andExpect(jsonPath("$.traceId").value("trace-doc-1"))
     }
 
     @Test
@@ -146,6 +154,35 @@ class DocumentApiTest {
         mockMvc.perform(get("/api/v1/documents/$documentId/content"))
             .andExpect(status().isOk)
             .andExpect(jsonPath("$.textContent").value("긴급 계약 검토 알림"))
+    }
+
+    @Test
+    fun `extracts text content for valid pdf stored locally`() {
+        val uploadRoot = Path.of("/tmp/smartdoc-document-test-uploads")
+        val target = uploadRoot.resolve("uploads/contract.pdf")
+        Files.createDirectories(target.parent)
+        Files.write(target, createPdfBytes("urgent contract review"))
+
+        mockMvc.perform(
+            post("/api/v1/documents")
+                .contentType(MediaType.APPLICATION_JSON)
+                .content(
+                    """
+                    {
+                      "filename":"contract.pdf",
+                      "fileKey":"uploads/contract.pdf",
+                      "contentType":"application/pdf"
+                    }
+                    """.trimIndent()
+                )
+        )
+            .andExpect(status().isCreated)
+
+        val documentId = documentRepository.findAll().first().id
+
+        mockMvc.perform(get("/api/v1/documents/$documentId/content"))
+            .andExpect(status().isOk)
+            .andExpect(jsonPath("$.textContent").value(containsString("contract")))
     }
 
     @Test
@@ -287,5 +324,24 @@ class DocumentApiTest {
             .andExpect(status().isBadRequest)
             .andExpect(jsonPath("$.code").value("VALIDATION_ERROR"))
             .andExpect(jsonPath("$.message").value("unsupported contentType text/plain for .pdf file"))
+    }
+
+    private fun createPdfBytes(text: String): ByteArray {
+        PDDocument().use { document ->
+            val page = PDPage()
+            document.addPage(page)
+
+            PDPageContentStream(document, page).use { content ->
+                content.beginText()
+                content.setFont(PDType1Font(Standard14Fonts.FontName.HELVETICA), 12f)
+                content.newLineAtOffset(72f, 700f)
+                content.showText(text)
+                content.endText()
+            }
+
+            val out = ByteArrayOutputStream()
+            document.save(out)
+            return out.toByteArray()
+        }
     }
 }
