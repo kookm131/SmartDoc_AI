@@ -259,6 +259,29 @@ ALTER TABLE smartdoc_analysis.analysis_jobs
 - analysis `8082`
 - notification `8083`
 
+### Swagger / OpenAPI
+각 백엔드 서비스는 Swagger UI와 OpenAPI JSON을 제공합니다. 서비스 실행 후 브라우저에서 아래 주소로 접속합니다.
+
+| 서비스 | Swagger UI | OpenAPI JSON |
+|--------|------------|--------------|
+| Gateway | `http://localhost:8080/swagger-ui/index.html` | `http://localhost:8080/v3/api-docs` |
+| Document | `http://localhost:8081/swagger-ui/index.html` | `http://localhost:8081/v3/api-docs` |
+| Analysis | `http://localhost:8082/swagger-ui/index.html` | `http://localhost:8082/v3/api-docs` |
+| Notification | `http://localhost:8083/swagger-ui/index.html` | `http://localhost:8083/v3/api-docs` |
+
+Gateway Swagger에서 인증이 필요한 API를 테스트할 때:
+
+1. `POST /api/v1/auth/login`에 기본 계정 `test@smartdoc.local` / `password`로 로그인합니다.
+2. 응답의 `accessToken` 값을 복사합니다.
+3. Swagger UI 오른쪽 위 `Authorize` 버튼을 누릅니다.
+4. 값 입력 칸에 `Bearer <accessToken>` 형식으로 입력합니다.
+5. 이후 Gateway의 문서/분석/알림 API를 Swagger에서 바로 호출할 수 있습니다.
+
+참고:
+- Gateway의 Swagger UI와 `/v3/api-docs`는 로컬 문서 확인을 위해 인증 없이 접근할 수 있습니다.
+- Document, Analysis, Notification 서비스를 직접 호출하면 Gateway 인증을 거치지 않으므로 로컬 개발 기본 owner인 `local-dev-user`가 사용됩니다.
+- 프론트엔드와 동일한 흐름을 확인하려면 Gateway Swagger를 우선 사용합니다.
+
 로컬 파일 업로드:
 - 기본 저장 위치: `.smartdoc/uploads`
 - 변경 환경변수: `SMARTDOC_LOCAL_UPLOAD_DIR`

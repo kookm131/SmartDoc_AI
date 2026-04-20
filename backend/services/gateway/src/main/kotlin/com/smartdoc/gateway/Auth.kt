@@ -318,6 +318,9 @@ class GatewayAuthFilter(
 
     private fun isPublicPath(path: String): Boolean =
         path in publicPaths ||
+            path == "/swagger-ui.html" ||
+            path.startsWith("/swagger-ui/") ||
+            path.startsWith("/v3/api-docs") ||
             path == "/actuator/health" ||
             path.startsWith("/actuator/health/")
 
